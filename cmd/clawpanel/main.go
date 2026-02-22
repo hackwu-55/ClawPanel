@@ -27,6 +27,26 @@ import (
 var frontendFS embed.FS
 
 func main() {
+	// Check if running as a Windows service
+	if runAsService() {
+		return
+	}
+
+	// Running as a normal process — use signal-based shutdown
+	stopCh := make(chan struct{})
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		<-sigCh
+		log.Println("[ClawPanel] 正在关闭...")
+		close(stopCh)
+	}()
+
+	runServer(stopCh)
+}
+
+// runServer starts the ClawPanel server and blocks until stopCh is closed.
+func runServer(stopCh chan struct{}) {
 	// 加载配置
 	cfg, err := config.Load()
 	if err != nil {
@@ -270,12 +290,9 @@ func main() {
 
 	srv := &http.Server{Addr: addr, Handler: r}
 
-	// 优雅关闭
+	// 优雅关闭：监听 stopCh
 	go func() {
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-		<-sigCh
-		log.Println("[ClawPanel] 正在关闭...")
+		<-stopCh
 		procMgr.StopAll()
 		srv.Close()
 	}()
