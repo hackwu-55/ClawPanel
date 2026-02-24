@@ -1,0 +1,511 @@
+package monitor
+
+import (
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"os/exec"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/zhaoxinyi02/ClawPanel/internal/config"
+	"github.com/zhaoxinyi02/ClawPanel/internal/eventlog"
+	"github.com/zhaoxinyi02/ClawPanel/internal/websocket"
+)
+
+// NapCatStatus represents the current NapCat connection state
+type NapCatStatus struct {
+	ContainerRunning bool      `json:"containerRunning"`
+	WSConnected      bool      `json:"wsConnected"`
+	HTTPAvailable    bool      `json:"httpAvailable"`
+	QQLoggedIn       bool      `json:"qqLoggedIn"`
+	QQNickname       string    `json:"qqNickname,omitempty"`
+	QQID             string    `json:"qqId,omitempty"`
+	LastCheck        time.Time `json:"lastCheck"`
+	LastOnline       time.Time `json:"lastOnline,omitempty"`
+	ReconnectCount   int       `json:"reconnectCount"`
+	MaxReconnect     int       `json:"maxReconnect"`
+	AutoReconnect    bool      `json:"autoReconnect"`
+	Status           string    `json:"status"` // online, offline, reconnecting, login_expired, stopped
+}
+
+// ReconnectLog records a reconnection attempt
+type ReconnectLog struct {
+	Time    time.Time `json:"time"`
+	Reason  string    `json:"reason"`
+	Success bool      `json:"success"`
+	Detail  string    `json:"detail,omitempty"`
+}
+
+// NapCatMonitor monitors NapCat connection and handles auto-reconnect
+type NapCatMonitor struct {
+	cfg            *config.Config
+	hub            *websocket.Hub
+	sysLog         *eventlog.SystemLogger
+	mu             sync.RWMutex
+	status         NapCatStatus
+	logs           []ReconnectLog
+	maxLogs        int
+	stopCh         chan struct{}
+	running        bool
+	checkInterval  time.Duration
+	reconnecting   bool          // true while a reconnect is in progress
+	offlineCount   int           // consecutive offline checks before triggering reconnect
+}
+
+// NewNapCatMonitor creates a new NapCat monitor
+func NewNapCatMonitor(cfg *config.Config, hub *websocket.Hub, sysLog *eventlog.SystemLogger) *NapCatMonitor {
+	return &NapCatMonitor{
+		cfg:           cfg,
+		hub:           hub,
+		sysLog:        sysLog,
+		maxLogs:       100,
+		checkInterval: 30 * time.Second,
+		status: NapCatStatus{
+			MaxReconnect:  10,
+			AutoReconnect: true,
+			Status:        "offline",
+		},
+		stopCh: make(chan struct{}),
+	}
+}
+
+// Start begins the monitoring loop
+func (m *NapCatMonitor) Start() {
+	m.mu.Lock()
+	if m.running {
+		m.mu.Unlock()
+		return
+	}
+	m.running = true
+	m.mu.Unlock()
+
+	go m.monitorLoop()
+	log.Println("[NapCatMonitor] 监控已启动，检测间隔:", m.checkInterval)
+}
+
+// Stop stops the monitoring loop
+func (m *NapCatMonitor) Stop() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.running {
+		return
+	}
+	m.running = false
+	close(m.stopCh)
+}
+
+// GetStatus returns current NapCat status
+func (m *NapCatMonitor) GetStatus() NapCatStatus {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.status
+}
+
+// GetLogs returns reconnection logs
+func (m *NapCatMonitor) GetLogs() []ReconnectLog {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	result := make([]ReconnectLog, len(m.logs))
+	copy(result, m.logs)
+	return result
+}
+
+// Reconnect manually triggers a reconnection
+func (m *NapCatMonitor) Reconnect() error {
+	m.mu.Lock()
+	m.status.Status = "reconnecting"
+	m.mu.Unlock()
+
+	m.broadcastStatus()
+	return m.doReconnect("手动触发重连")
+}
+
+// SetAutoReconnect enables/disables auto-reconnect
+func (m *NapCatMonitor) SetAutoReconnect(enabled bool) {
+	m.mu.Lock()
+	m.status.AutoReconnect = enabled
+	m.mu.Unlock()
+}
+
+// SetMaxReconnect sets the maximum reconnection attempts
+func (m *NapCatMonitor) SetMaxReconnect(max int) {
+	m.mu.Lock()
+	m.status.MaxReconnect = max
+	m.mu.Unlock()
+}
+
+func (m *NapCatMonitor) monitorLoop() {
+	// Initial check after a short delay
+	select {
+	case <-m.stopCh:
+		return
+	case <-time.After(5 * time.Second):
+	}
+
+	m.checkAndUpdate()
+
+	ticker := time.NewTicker(m.checkInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-m.stopCh:
+			return
+		case <-ticker.C:
+			m.checkAndUpdate()
+		}
+	}
+}
+
+func (m *NapCatMonitor) checkAndUpdate() {
+	// Skip checks while a reconnect is in progress
+	m.mu.RLock()
+	if m.reconnecting {
+		m.mu.RUnlock()
+		return
+	}
+	m.mu.RUnlock()
+
+	containerRunning := isContainerRunning("openclaw-qq")
+	wsConnected := isPortReachable(3001)
+	httpAvailable := isPortReachable(3000)
+	qqLoggedIn := false
+	qqNickname := ""
+	qqID := ""
+
+	// Only check login status if WebUI port is reachable
+	if isPortReachable(6099) {
+		qqLoggedIn, qqNickname, qqID = checkQQLoginStatus(m.cfg)
+	}
+
+	m.mu.Lock()
+	prevStatus := m.status.Status
+
+	m.status.ContainerRunning = containerRunning
+	m.status.WSConnected = wsConnected
+	m.status.HTTPAvailable = httpAvailable
+	m.status.QQLoggedIn = qqLoggedIn
+	m.status.QQNickname = qqNickname
+	m.status.QQID = qqID
+	m.status.LastCheck = time.Now()
+
+	// Determine overall status
+	if !containerRunning {
+		m.status.Status = "stopped"
+	} else if qqLoggedIn {
+		m.status.Status = "online"
+		m.status.LastOnline = time.Now()
+		m.status.ReconnectCount = 0
+		m.offlineCount = 0
+	} else if wsConnected || httpAvailable {
+		// Container running, services up, but QQ not logged in
+		// Only mark as login_expired if we were previously online
+		if prevStatus == "online" {
+			m.status.Status = "login_expired"
+		} else if prevStatus == "login_expired" {
+			// Stay in login_expired state
+		} else {
+			m.status.Status = "offline"
+		}
+		m.offlineCount = 0
+	} else if containerRunning {
+		// Container running but services not responding yet (booting up)
+		m.offlineCount++
+		if m.offlineCount <= 3 {
+			// Give it a few checks to boot up before declaring offline
+			m.status.Status = prevStatus // keep previous status
+		} else {
+			m.status.Status = "offline"
+		}
+	} else {
+		m.offlineCount++
+		m.status.Status = "stopped"
+	}
+
+	currentStatus := m.status.Status
+	autoReconnect := m.status.AutoReconnect
+	reconnectCount := m.status.ReconnectCount
+	maxReconnect := m.status.MaxReconnect
+	offlineCount := m.offlineCount
+	m.mu.Unlock()
+
+	// Broadcast status change
+	if currentStatus != prevStatus {
+		m.broadcastStatus()
+
+		// Log status changes (only log meaningful transitions)
+		switch currentStatus {
+		case "online":
+			m.sysLog.Log("system", "napcat.online", fmt.Sprintf("NapCat QQ 已上线 (%s: %s)", qqID, qqNickname))
+		case "login_expired":
+			if prevStatus == "online" {
+				m.sysLog.Log("system", "napcat.login_expired", "NapCat QQ 登录已失效，需要重新扫码")
+			}
+		case "stopped":
+			if prevStatus == "online" || prevStatus == "login_expired" {
+				m.sysLog.Log("system", "napcat.stopped", "NapCat 容器已停止")
+			}
+		case "offline":
+			if prevStatus == "online" {
+				m.sysLog.Log("system", "napcat.offline", "NapCat QQ 已离线")
+			}
+		}
+	}
+
+	// Auto-reconnect: only trigger after 3+ consecutive offline checks AND previous was online
+	if autoReconnect && currentStatus == "offline" && offlineCount >= 3 {
+		if reconnectCount < maxReconnect {
+			m.mu.Lock()
+			m.status.Status = "reconnecting"
+			m.reconnecting = true
+			m.mu.Unlock()
+			m.broadcastStatus()
+
+			go func() {
+				m.doReconnect("检测到连接断开，自动重连")
+				m.mu.Lock()
+				m.reconnecting = false
+				m.offlineCount = 0
+				m.mu.Unlock()
+			}()
+		} else if reconnectCount == maxReconnect {
+			m.sysLog.Log("system", "napcat.reconnect_limit", fmt.Sprintf("NapCat 自动重连已达上限 (%d 次)，停止重连", maxReconnect))
+			m.mu.Lock()
+			m.status.ReconnectCount = maxReconnect + 1 // prevent repeated log
+			m.mu.Unlock()
+		}
+	}
+}
+
+func (m *NapCatMonitor) doReconnect(reason string) error {
+	m.mu.Lock()
+	m.status.ReconnectCount++
+	count := m.status.ReconnectCount
+	m.mu.Unlock()
+
+	m.sysLog.Log("system", "napcat.reconnecting", fmt.Sprintf("NapCat 正在重连 (第 %d 次): %s", count, reason))
+
+	rlog := ReconnectLog{
+		Time:   time.Now(),
+		Reason: reason,
+	}
+
+	// Restart the Docker container
+	cmd := exec.Command("docker", "restart", "openclaw-qq")
+	out, err := cmd.CombinedOutput()
+
+	if err != nil {
+		rlog.Success = false
+		rlog.Detail = fmt.Sprintf("docker restart 失败: %s %s", err.Error(), string(out))
+		m.addLog(rlog)
+
+		m.mu.Lock()
+		m.status.Status = "offline"
+		m.mu.Unlock()
+		m.broadcastStatus()
+
+		m.sysLog.Log("system", "napcat.reconnect_failed", fmt.Sprintf("NapCat 重连失败: %v", err))
+		return err
+	}
+
+	// Wait for container to come back up
+	time.Sleep(10 * time.Second)
+
+	// Check if services are back
+	wsOK := false
+	for i := 0; i < 6; i++ {
+		if isPortReachable(3001) {
+			wsOK = true
+			break
+		}
+		time.Sleep(5 * time.Second)
+	}
+
+	if wsOK {
+		rlog.Success = true
+		rlog.Detail = "容器重启成功，WebSocket 服务已恢复"
+		m.addLog(rlog)
+
+		// Check login status
+		loggedIn, nickname, qqid := checkQQLoginStatus(m.cfg)
+		m.mu.Lock()
+		m.status.WSConnected = true
+		m.status.HTTPAvailable = isPortReachable(3000)
+		m.status.QQLoggedIn = loggedIn
+		m.status.QQNickname = nickname
+		m.status.QQID = qqid
+		if loggedIn {
+			m.status.Status = "online"
+			m.status.LastOnline = time.Now()
+			m.status.ReconnectCount = 0
+		} else {
+			m.status.Status = "login_expired"
+		}
+		m.mu.Unlock()
+		m.broadcastStatus()
+
+		if loggedIn {
+			m.sysLog.Log("system", "napcat.reconnected", fmt.Sprintf("NapCat 重连成功，QQ 已上线 (%s: %s)", qqid, nickname))
+		} else {
+			m.sysLog.Log("system", "napcat.reconnected_no_login", "NapCat 容器已重启，但 QQ 需要重新登录")
+		}
+		return nil
+	}
+
+	rlog.Success = false
+	rlog.Detail = "容器重启后 WebSocket 服务未恢复"
+	m.addLog(rlog)
+
+	m.mu.Lock()
+	m.status.Status = "offline"
+	m.mu.Unlock()
+	m.broadcastStatus()
+
+	m.sysLog.Log("system", "napcat.reconnect_failed", "NapCat 重连后服务未恢复")
+	return fmt.Errorf("WebSocket 服务未恢复")
+}
+
+func (m *NapCatMonitor) addLog(rlog ReconnectLog) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.logs = append(m.logs, rlog)
+	if len(m.logs) > m.maxLogs {
+		m.logs = m.logs[len(m.logs)-m.maxLogs:]
+	}
+}
+
+func (m *NapCatMonitor) broadcastStatus() {
+	m.mu.RLock()
+	status := m.status
+	m.mu.RUnlock()
+
+	msg, _ := json.Marshal(map[string]interface{}{
+		"type": "napcat-status",
+		"data": status,
+	})
+	m.hub.Broadcast(msg)
+}
+
+// --- Helpers ---
+
+func isContainerRunning(name string) bool {
+	out, err := exec.Command("docker", "inspect", "--format", "{{.State.Running}}", name).Output()
+	return err == nil && strings.TrimSpace(string(out)) == "true"
+}
+
+func isPortReachable(port int) bool {
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 3*time.Second)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
+func checkQQLoginStatus(cfg *config.Config) (loggedIn bool, nickname string, qqID string) {
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	// Get WebUI token from container config
+	token := ""
+	out, err := exec.Command("docker", "exec", "openclaw-qq", "cat", "/app/napcat/config/webui.json").Output()
+	if err == nil {
+		var webui map[string]interface{}
+		if json.Unmarshal(out, &webui) == nil {
+			if t, ok := webui["token"].(string); ok && t != "" {
+				token = t
+			}
+		}
+	}
+	if token == "" {
+		return false, "", ""
+	}
+
+	// Auth using SHA256 hash (same method as bot.go napcatAuth)
+	hash := sha256.Sum256([]byte(token + ".napcat"))
+	hashStr := fmt.Sprintf("%x", hash)
+	loginBody := fmt.Sprintf(`{"hash":"%s"}`, hashStr)
+	resp, err := client.Post("http://127.0.0.1:6099/api/auth/login", "application/json", strings.NewReader(loginBody))
+	if err != nil {
+		return false, "", ""
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	var loginResp map[string]interface{}
+	if json.Unmarshal(body, &loginResp) != nil {
+		return false, "", ""
+	}
+
+	// Extract credential from response: {code: 0, data: {Credential: "..."}}
+	cred := ""
+	if code, ok := loginResp["code"].(float64); ok && code == 0 {
+		if data, ok := loginResp["data"].(map[string]interface{}); ok {
+			cred, _ = data["Credential"].(string)
+		}
+	}
+	if cred == "" {
+		return false, "", ""
+	}
+
+	// Check login status
+	req, _ := http.NewRequest("POST", "http://127.0.0.1:6099/api/QQLogin/CheckLoginStatus", nil)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+cred)
+	resp2, err := client.Do(req)
+	if err != nil {
+		return false, "", ""
+	}
+	defer resp2.Body.Close()
+	body2, _ := io.ReadAll(resp2.Body)
+	var statusResp map[string]interface{}
+	if json.Unmarshal(body2, &statusResp) != nil {
+		return false, "", ""
+	}
+
+	// Response: {code: 0, data: {isLogin: true/false}}
+	if code, ok := statusResp["code"].(float64); !ok || code != 0 {
+		return false, "", ""
+	}
+	statusData, _ := statusResp["data"].(map[string]interface{})
+	if statusData == nil {
+		return false, "", ""
+	}
+	isLogin, _ := statusData["isLogin"].(bool)
+	if !isLogin {
+		return false, "", ""
+	}
+
+	// Get login info
+	req3, _ := http.NewRequest("POST", "http://127.0.0.1:6099/api/QQLogin/GetQQLoginInfo", nil)
+	req3.Header.Set("Content-Type", "application/json")
+	req3.Header.Set("Authorization", "Bearer "+cred)
+	resp3, err := client.Do(req3)
+	if err != nil {
+		return true, "", ""
+	}
+	defer resp3.Body.Close()
+	body3, _ := io.ReadAll(resp3.Body)
+	var infoResp map[string]interface{}
+	if json.Unmarshal(body3, &infoResp) != nil {
+		return true, "", ""
+	}
+	if infoCode, ok := infoResp["code"].(float64); ok && infoCode == 0 {
+		infoData, _ := infoResp["data"].(map[string]interface{})
+		if infoData != nil {
+			nickname, _ = infoData["nick"].(string)
+			if uid, ok := infoData["uin"].(float64); ok {
+				qqID = fmt.Sprintf("%.0f", uid)
+			}
+			if uid, ok := infoData["uin"].(string); ok {
+				qqID = uid
+			}
+		}
+	}
+
+	return true, nickname, qqID
+}

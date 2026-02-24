@@ -84,6 +84,13 @@ const _api = {
   napcatLoginInfo: () => get('/napcat/login-info'),
   napcatLogout: () => post('/napcat/logout'),
   napcatRestart: () => post('/napcat/restart'),
+  napcatStatus: () => get('/napcat/status'),
+  napcatReconnectLogs: () => get('/napcat/reconnect-logs'),
+  napcatReconnect: () => post('/napcat/reconnect'),
+  napcatMonitorConfig: (data: { autoReconnect?: boolean; maxReconnect?: number }) => put('/napcat/monitor-config', data),
+  // Config check & fix
+  checkConfig: () => get('/openclaw/config/check'),
+  fixConfig: (issueIds: string[]) => post('/openclaw/config/fix', { issueIds }),
   toggleChannel: (channelId: string, enabled: boolean) => post('/openclaw/toggle-channel', { channelId, enabled }),
   // WeChat
   wechatStatus: () => get('/wechat/status'),

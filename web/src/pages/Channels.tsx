@@ -178,6 +178,29 @@ export default function Channels() {
   const [loginMsg, setLoginMsg] = useState('');
   const [softwareList, setSoftwareList] = useState<any[]>([]);
   const [installingSw, setInstallingSw] = useState<string | null>(null);
+  const [napcatStatus, setNapcatStatus] = useState<any>(null);
+  const [reconnectLogs, setReconnectLogs] = useState<any[]>([]);
+  const [showReconnectLogs, setShowReconnectLogs] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
+
+  const loadNapcatStatus = () => {
+    api.napcatStatus().then(r => { if (r.ok) setNapcatStatus(r.status); }).catch(() => {});
+  };
+
+  const loadReconnectLogs = () => {
+    api.napcatReconnectLogs().then(r => { if (r.ok) setReconnectLogs(r.logs || []); }).catch(() => {});
+  };
+
+  const handleReconnect = async () => {
+    if (!confirm('确定要触发 NapCat 重连？将重启容器。')) return;
+    setReconnecting(true);
+    try {
+      const r = await api.napcatReconnect();
+      if (r.ok) setMsg('重连请求已发送，请等待...');
+      else setMsg(r.error || '重连失败');
+    } catch (err) { setMsg('重连失败: ' + String(err)); }
+    finally { setReconnecting(false); setTimeout(() => { setMsg(''); loadNapcatStatus(); }, 10000); }
+  };
 
   const loadSoftware = () => {
     api.getSoftwareList().then(r => { if (r.ok) setSoftwareList(r.software || []); }).catch(() => {});
@@ -204,7 +227,11 @@ export default function Channels() {
     api.getRequests().then(r => { if (r.ok) setRequests(r.requests || []); });
   };
 
-  useEffect(() => { reload(); loadSoftware(); }, []);
+  useEffect(() => { reload(); loadSoftware(); loadNapcatStatus(); }, []);
+  useEffect(() => {
+    const timer = setInterval(loadNapcatStatus, 30000);
+    return () => clearInterval(timer);
+  }, []);
 
   const ocChannels = ocConfig?.channels || {};
   const ocPlugins = ocConfig?.plugins?.entries || {};
@@ -582,6 +609,78 @@ export default function Channels() {
                   )}
                 </div>
               </div>
+
+              {/* NapCat Connection Status */}
+              {currentDef.id === 'qq' && napcatStatus && (
+                <div className={`rounded-xl border p-4 mb-2 ${
+                  napcatStatus.status === 'online' ? 'bg-emerald-50/50 dark:bg-emerald-900/10 border-emerald-200 dark:border-emerald-800/30' :
+                  napcatStatus.status === 'reconnecting' ? 'bg-amber-50/50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800/30' :
+                  napcatStatus.status === 'login_expired' ? 'bg-orange-50/50 dark:bg-orange-900/10 border-orange-200 dark:border-orange-800/30' :
+                  'bg-red-50/50 dark:bg-red-900/10 border-red-200 dark:border-red-800/30'
+                }`}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-2.5 h-2.5 rounded-full ${
+                        napcatStatus.status === 'online' ? 'bg-emerald-500 animate-pulse' :
+                        napcatStatus.status === 'reconnecting' ? 'bg-amber-500 animate-pulse' :
+                        napcatStatus.status === 'login_expired' ? 'bg-orange-500' :
+                        'bg-red-500'
+                      }`} />
+                      <div>
+                        <span className="text-sm font-semibold text-gray-900 dark:text-white">
+                          {napcatStatus.status === 'online' ? '🟢 NapCat 在线' :
+                           napcatStatus.status === 'reconnecting' ? '🟡 正在重连...' :
+                           napcatStatus.status === 'login_expired' ? '🟠 登录已失效' :
+                           napcatStatus.status === 'stopped' ? '🔴 容器已停止' :
+                           '🔴 NapCat 离线'}
+                        </span>
+                        {napcatStatus.qqId && (
+                          <span className="ml-2 text-xs text-gray-500">
+                            {napcatStatus.qqNickname || napcatStatus.qqId} ({napcatStatus.qqId})
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {napcatStatus.autoReconnect && (
+                        <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400">
+                          自动重连 {napcatStatus.reconnectCount > 0 ? `(${napcatStatus.reconnectCount}/${napcatStatus.maxReconnect})` : '已启用'}
+                        </span>
+                      )}
+                      {(napcatStatus.status === 'offline' || napcatStatus.status === 'stopped') && (
+                        <button onClick={handleReconnect} disabled={reconnecting}
+                          className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-lg bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400 hover:bg-violet-100 dark:hover:bg-violet-900/50 disabled:opacity-50 transition-colors">
+                          <RefreshCw size={11} className={reconnecting ? 'animate-spin' : ''} />
+                          {reconnecting ? '重连中...' : '手动重连'}
+                        </button>
+                      )}
+                      <button onClick={() => { setShowReconnectLogs(!showReconnectLogs); if (!showReconnectLogs) loadReconnectLogs(); }}
+                        className="text-[11px] text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors underline">
+                        {showReconnectLogs ? '收起日志' : '重连日志'}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4 mt-2 text-[11px] text-gray-500">
+                    <span>容器: {napcatStatus.containerRunning ? '✅ 运行中' : '❌ 未运行'}</span>
+                    <span>WS: {napcatStatus.wsConnected ? '✅ 已连接' : '❌ 未连接'}</span>
+                    <span>HTTP: {napcatStatus.httpAvailable ? '✅ 可用' : '❌ 不可用'}</span>
+                    <span>QQ: {napcatStatus.qqLoggedIn ? '✅ 已登录' : '❌ 未登录'}</span>
+                  </div>
+                  {showReconnectLogs && reconnectLogs.length > 0 && (
+                    <div className="mt-3 border-t border-gray-200 dark:border-gray-700 pt-3 space-y-1.5 max-h-40 overflow-y-auto">
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">重连日志</p>
+                      {reconnectLogs.slice(-10).reverse().map((log: any, i: number) => (
+                        <div key={i} className="flex items-center gap-2 text-[11px]">
+                          <span className={log.success ? 'text-emerald-500' : 'text-red-500'}>{log.success ? '✅' : '❌'}</span>
+                          <span className="text-gray-400 font-mono">{new Date(log.time).toLocaleTimeString()}</span>
+                          <span className="text-gray-600 dark:text-gray-400">{log.reason}</span>
+                          {log.detail && <span className="text-gray-400 truncate">— {log.detail}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <form id="channel-config-form" className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5" onSubmit={e => { e.preventDefault(); handleSave(); }}>
                 {currentDef.configFields.map(field => {

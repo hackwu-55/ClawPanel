@@ -18,6 +18,7 @@ import (
 	"github.com/zhaoxinyi02/ClawPanel/internal/middleware"
 	"github.com/zhaoxinyi02/ClawPanel/internal/model"
 	"github.com/zhaoxinyi02/ClawPanel/internal/eventlog"
+	"github.com/zhaoxinyi02/ClawPanel/internal/monitor"
 	"github.com/zhaoxinyi02/ClawPanel/internal/process"
 	"github.com/zhaoxinyi02/ClawPanel/internal/taskman"
 	"github.com/zhaoxinyi02/ClawPanel/internal/websocket"
@@ -78,6 +79,11 @@ func runServer(stopCh chan struct{}) {
 	evListener := eventlog.NewListener(db, wsHub, "ws://127.0.0.1:3001")
 	evListener.Start()
 	defer evListener.Stop()
+
+	// 启动 NapCat 连接监控
+	napcatMon := monitor.NewNapCatMonitor(cfg, wsHub, sysLog)
+	napcatMon.Start()
+	defer napcatMon.Stop()
 
 	// 设置 Gin 模式
 	if cfg.Debug {
@@ -196,6 +202,10 @@ func runServer(stopCh chan struct{}) {
 			auth.GET("/napcat/login-info", handler.NapcatLoginInfo(cfg))
 			auth.POST("/napcat/logout", handler.NapcatLogout(cfg))
 			auth.POST("/napcat/restart", handler.RestartNapcat(cfg))
+			auth.GET("/napcat/status", handler.GetNapCatStatus(napcatMon))
+			auth.GET("/napcat/reconnect-logs", handler.GetNapCatReconnectLogs(napcatMon))
+			auth.POST("/napcat/reconnect", handler.NapCatReconnect(napcatMon))
+			auth.PUT("/napcat/monitor-config", handler.NapCatMonitorConfig(napcatMon))
 
 			// WeChat
 			auth.GET("/wechat/status", handler.WechatStatus(cfg))
@@ -221,6 +231,10 @@ func runServer(stopCh chan struct{}) {
 			auth.GET("/sessions", handler.GetSessions(cfg))
 			auth.GET("/sessions/:id", handler.GetSessionDetail(cfg))
 			auth.DELETE("/sessions/:id", handler.DeleteSession(cfg))
+
+			// 配置检测 & 修复
+			auth.GET("/openclaw/config/check", handler.CheckConfig(cfg))
+			auth.POST("/openclaw/config/fix", handler.FixConfig(cfg))
 
 			// 软件环境 & 安装任务
 			auth.GET("/software/list", handler.GetSoftwareList(cfg))
@@ -284,7 +298,7 @@ func runServer(stopCh chan struct{}) {
 
 	// 启动服务器
 	addr := fmt.Sprintf("0.0.0.0:%d", cfg.Port)
-	log.Printf("[ClawPanel] v5.0.0 启动中 → http://%s", addr)
+	log.Printf("[ClawPanel] v5.0.1 启动中 → http://%s", addr)
 	log.Printf("[ClawPanel] 数据目录: %s", cfg.DataDir)
 	log.Printf("[ClawPanel] OpenClaw 目录: %s", cfg.OpenClawDir)
 

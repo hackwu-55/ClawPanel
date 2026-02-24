@@ -117,7 +117,11 @@ export function useWebSocket() {
     return () => { ws.close(); };
   }, []);
 
-  const clearEvents = useCallback(() => setEvents([]), []);
+  const clearEvents = useCallback(() => {
+    setEvents([]);
+    setLogEntries([]);
+    api.clearEvents().catch(() => {});
+  }, []);
   const refreshLog = useCallback(() => {
     if (IS_DEMO) {
       setLogEntries(DEMO_LOG_ENTRIES.map(demoToLogEntry));

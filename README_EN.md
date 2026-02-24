@@ -9,7 +9,7 @@
 Go Single Binary · React 18 · TailwindCSS · SQLite · WebSocket Real-time · Cross-platform
 
 [![License](https://img.shields.io/badge/license-CC%20BY--NC--SA%204.0-red?style=flat-square)](LICENSE)
-[![Version](https://img.shields.io/badge/version-5.0.0-violet?style=flat-square)](https://github.com/zhaoxinyi02/ClawPanel/releases)
+[![Version](https://img.shields.io/badge/version-5.0.1-violet?style=flat-square)](https://github.com/zhaoxinyi02/ClawPanel/releases)
 [![Go](https://img.shields.io/badge/go-1.22+-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev)
 [![React](https://img.shields.io/badge/react-18-61DAFB?style=flat-square&logo=react&logoColor=white)](https://react.dev)
 [![GitHub Stars](https://img.shields.io/github/stars/zhaoxinyi02/ClawPanel?style=flat-square&logo=github)](https://github.com/zhaoxinyi02/ClawPanel/stargazers)
@@ -26,7 +26,7 @@ Go Single Binary · React 18 · TailwindCSS · SQLite · WebSocket Real-time · 
 > This project is for **learning and research purposes only**. **Commercial use is strictly prohibited.** Using third-party clients to log in to QQ/WeChat may violate Tencent's Terms of Service and **carries a risk of account suspension**. Please use test accounts. The author has **not performed any reverse engineering** and only integrates existing open-source projects. **No responsibility is assumed for any consequences.** By downloading and using this project, you agree to the [full disclaimer](DISCLAIMER.md).
 
 > [!NOTE]
-> **v5.0.0 Full Rewrite** — Backend migrated from Node.js to Go, frontend upgraded to React 18 + TailwindCSS. A single binary file deploys everything — embedded web server and frontend assets. Supports Linux / Windows / macOS (x86_64 / arm64).
+> **v5.0.1 New** — Config auto-detection + one-click fix, NapCat auto-reconnect + real-time status monitoring, activity log now shows bot replies. [View changelog](changelogs/v5.0.1.md)
 
 ## Features
 

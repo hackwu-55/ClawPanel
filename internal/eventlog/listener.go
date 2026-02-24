@@ -155,7 +155,7 @@ func (l *Listener) processMessage(raw []byte) {
 	var event *model.Event
 
 	switch postType {
-	case "message":
+	case "message", "message_sent":
 		event = l.parseMessageEvent(msg)
 	case "notice":
 		event = l.parseNoticeEvent(msg)

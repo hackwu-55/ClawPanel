@@ -33,7 +33,7 @@ const KNOWN_PROVIDERS: { id: string; name: string; nameZh?: string; baseUrl: str
   { id: 'nvidia', name: 'NVIDIA NIM', baseUrl: 'https://integrate.api.nvidia.com/v1', apiKeyUrl: 'https://build.nvidia.com/models', models: ['meta/llama-3.1-405b-instruct', 'minimaxai/minimax-m2.1'], category: 'agg' },
 ];
 
-type ConfigTab = 'models' | 'identity' | 'general' | 'version' | 'env';
+type ConfigTab = 'models' | 'identity' | 'general' | 'version' | 'env' | 'health';
 
 export default function SystemConfig() {
   const { t: i18n } = useI18n();
@@ -57,6 +57,11 @@ export default function SystemConfig() {
   const [identitySaving, setIdentitySaving] = useState(false);
   const [adminToken, setAdminToken] = useState('');
   const [checking, setChecking] = useState(false);
+  const [configIssues, setConfigIssues] = useState<any[]>([]);
+  const [configChecked, setConfigChecked] = useState(0);
+  const [configProblems, setConfigProblems] = useState(0);
+  const [configCheckLoading, setConfigCheckLoading] = useState(false);
+  const [fixing, setFixing] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [updateLog, setUpdateLog] = useState<string[]>([]);
   const [updateStatus, setUpdateStatus] = useState('idle');
@@ -104,10 +109,50 @@ export default function SystemConfig() {
     if (r.ok) setAdminToken(r.token || '');
   };
 
+  const loadConfigCheck = async () => {
+    setConfigCheckLoading(true);
+    try {
+      const r = await api.checkConfig();
+      if (r.ok) {
+        setConfigIssues(r.issues || []);
+        setConfigChecked(r.checked || 0);
+        setConfigProblems(r.problems || 0);
+      }
+    } catch {} finally { setConfigCheckLoading(false); }
+  };
+
+  const handleFixAll = async () => {
+    const fixable = configIssues.filter((i: any) => i.fixable && (i.severity === 'error' || i.severity === 'warning'));
+    if (fixable.length === 0) return;
+    if (!confirm(`确定要自动修复 ${fixable.length} 个配置问题？修复后可能需要重启相关服务。`)) return;
+    setFixing(true);
+    try {
+      const r = await api.fixConfig(fixable.map((i: any) => i.id));
+      if (r.ok) {
+        setMsg(`✅ 已修复 ${r.fixed?.length || 0} 个问题${r.napcatRestart ? '，NapCat 容器正在重启...' : ''}`);
+        setTimeout(() => loadConfigCheck(), 2000);
+      }
+    } catch (err) { setMsg('修复失败: ' + String(err)); }
+    finally { setFixing(false); setTimeout(() => setMsg(''), 6000); }
+  };
+
+  const handleFixSingle = async (issueId: string) => {
+    setFixing(true);
+    try {
+      const r = await api.fixConfig([issueId]);
+      if (r.ok) {
+        setMsg(`✅ 已修复${r.napcatRestart ? '，NapCat 容器正在重启...' : ''}`);
+        setTimeout(() => loadConfigCheck(), 2000);
+      }
+    } catch (err) { setMsg('修复失败: ' + String(err)); }
+    finally { setFixing(false); setTimeout(() => setMsg(''), 6000); }
+  };
+
   useEffect(() => {
     if (tab === 'version') loadVersion();
     if (tab === 'env') loadEnv();
     if (tab === 'identity') { loadIdentityDocs(); loadAdminToken(); }
+    if (tab === 'health') loadConfigCheck();
   }, [tab]);
 
   const getVal = (path: string): any => path.split('.').reduce((o: any, k: string) => o?.[k], config);
@@ -202,6 +247,7 @@ export default function SystemConfig() {
           { id: 'general' as ConfigTab, label: i18n.sysConfig.tabGeneral, icon: Terminal },
           { id: 'version' as ConfigTab, label: i18n.sysConfig.tabVersion, icon: Package },
           { id: 'env' as ConfigTab, label: i18n.sysConfig.tabEnv, icon: Monitor },
+          { id: 'health' as ConfigTab, label: '配置检测', icon: Shield },
         ]).map(tb => (
           <button key={tb.id} onClick={() => setTab(tb.id)}
             className={`flex items-center gap-2 pb-3 text-sm font-medium border-b-2 transition-all whitespace-nowrap ${tab === tb.id ? 'border-violet-600 text-violet-700 dark:text-violet-400' : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}>
@@ -793,6 +839,107 @@ export default function SystemConfig() {
               </div>
               
               <SoftwareEnvironment envInfo={envInfo} onRefresh={loadEnv} />
+            </>
+          )}
+        </div>
+      )}
+
+      {/* === Config Health Check Tab === */}
+      {tab === 'health' && (
+        <div className="space-y-6 animate-in fade-in slide-in-from-top-4 duration-200">
+          {configCheckLoading ? (
+            <div className="flex flex-col items-center justify-center py-16 text-gray-400 gap-3">
+              <RefreshCw size={32} className="animate-spin text-violet-500/50" />
+              <p className="text-sm">正在扫描配置文件...</p>
+            </div>
+          ) : (
+            <>
+              {/* Summary */}
+              <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 p-5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className={`p-3 rounded-xl ${configProblems === 0 ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600' : 'bg-amber-50 dark:bg-amber-900/20 text-amber-600'}`}>
+                      {configProblems === 0 ? <CheckCircle size={24} /> : <AlertTriangle size={24} />}
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-gray-900 dark:text-white">
+                        {configProblems === 0 ? '配置正常' : `发现 ${configProblems} 个配置问题`}
+                      </h3>
+                      <p className="text-xs text-gray-500 mt-0.5">已检查 {configChecked} 项配置</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {configProblems > 0 && configIssues.some((i: any) => i.fixable) && (
+                      <button onClick={handleFixAll} disabled={fixing}
+                        className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 transition-all shadow-sm">
+                        {fixing ? <RefreshCw size={12} className="animate-spin" /> : <Command size={12} />}
+                        {fixing ? '修复中...' : '一键修复全部'}
+                      </button>
+                    )}
+                    <button onClick={loadConfigCheck} disabled={configCheckLoading}
+                      className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 transition-colors">
+                      <RefreshCw size={12} className={configCheckLoading ? 'animate-spin' : ''} />
+                      重新检测
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Issue list */}
+              {configIssues.length > 0 ? (
+                <div className="space-y-3">
+                  {configIssues.map((issue: any) => (
+                    <div key={issue.id} className={`bg-white dark:bg-gray-800 rounded-xl shadow-sm border overflow-hidden transition-all ${
+                      issue.severity === 'error' ? 'border-red-200 dark:border-red-800/30' :
+                      issue.severity === 'warning' ? 'border-amber-200 dark:border-amber-800/30' :
+                      'border-gray-100 dark:border-gray-700/50'
+                    }`}>
+                      <div className="p-4 flex items-start gap-3">
+                        <div className={`p-1.5 rounded-lg shrink-0 mt-0.5 ${
+                          issue.severity === 'error' ? 'bg-red-50 dark:bg-red-900/20 text-red-500' :
+                          issue.severity === 'warning' ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-500' :
+                          'bg-blue-50 dark:bg-blue-900/20 text-blue-500'
+                        }`}>
+                          <AlertTriangle size={14} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                              issue.severity === 'error' ? 'bg-red-100 dark:bg-red-900/30 text-red-600' :
+                              issue.severity === 'warning' ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600' :
+                              'bg-blue-100 dark:bg-blue-900/30 text-blue-600'
+                            }`}>{issue.severity === 'error' ? '错误' : issue.severity === 'warning' ? '警告' : '信息'}</span>
+                            <span className="text-[10px] font-medium text-gray-400 uppercase">{issue.component}</span>
+                          </div>
+                          <h4 className="text-sm font-semibold text-gray-900 dark:text-white">{issue.title}</h4>
+                          <p className="text-xs text-gray-500 mt-1">{issue.description}</p>
+                          {(issue.currentValue || issue.expectedValue) && (
+                            <div className="flex items-center gap-3 mt-2 text-[11px]">
+                              {issue.currentValue && <span className="text-gray-500">当前: <code className="bg-red-50 dark:bg-red-900/20 text-red-600 px-1 rounded font-mono">{issue.currentValue}</code></span>}
+                              {issue.expectedValue && <span className="text-gray-500">期望: <code className="bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 px-1 rounded font-mono">{issue.expectedValue}</code></span>}
+                            </div>
+                          )}
+                          {issue.filePath && (
+                            <p className="text-[10px] text-gray-400 mt-1.5 font-mono truncate" title={issue.filePath}>{issue.filePath}</p>
+                          )}
+                        </div>
+                        {issue.fixable && (
+                          <button onClick={() => handleFixSingle(issue.id)} disabled={fixing}
+                            className="shrink-0 flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-lg bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400 hover:bg-violet-100 dark:hover:bg-violet-900/50 disabled:opacity-50 transition-colors">
+                            <Command size={12} />修复
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-12 text-gray-400 gap-2">
+                  <CheckCircle size={40} className="text-emerald-400" />
+                  <p className="text-sm font-medium text-emerald-600">所有配置项检查通过</p>
+                  <p className="text-xs text-gray-400">OpenClaw 和 NapCat 配置均正常</p>
+                </div>
+              )}
             </>
           )}
         </div>

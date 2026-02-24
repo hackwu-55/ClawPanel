@@ -42,8 +42,9 @@ NAPCAT_WS_PORT="${NAPCAT_WS_PORT:-3001}"
 NAPCAT_HTTP_PORT="${NAPCAT_HTTP_PORT:-3000}"
 NAPCAT_TOKEN="${NAPCAT_TOKEN:-}"
 
-echo "[NapCat] 配置 OneBot11 (WS:${NAPCAT_WS_PORT} HTTP:${NAPCAT_HTTP_PORT})..."
-cat > "${ONEBOT_CONFIG}" << EOF
+if [ ! -f "${ONEBOT_CONFIG}" ]; then
+    echo "[NapCat] 初始化 OneBot11 配置 (WS:${NAPCAT_WS_PORT} HTTP:${NAPCAT_HTTP_PORT})..."
+    cat > "${ONEBOT_CONFIG}" << EOF
 {
     "network": {
         "websocketServers": [
@@ -53,7 +54,7 @@ cat > "${ONEBOT_CONFIG}" << EOF
                 "host": "0.0.0.0",
                 "port": ${NAPCAT_WS_PORT},
                 "token": "${NAPCAT_TOKEN}",
-                "reportSelfMessage": false,
+                "reportSelfMessage": true,
                 "enableForcePushEvent": true,
                 "messagePostFormat": "array",
                 "debug": false,
@@ -80,6 +81,9 @@ cat > "${ONEBOT_CONFIG}" << EOF
     "imageDownloadProxy": ""
 }
 EOF
+else
+    echo "[NapCat] OneBot11 配置已存在，保留用户修改"
+fi
 
 # === 4. Setup user permissions ===
 : ${NAPCAT_GID:=0}
