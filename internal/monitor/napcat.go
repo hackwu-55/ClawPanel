@@ -56,6 +56,7 @@ type NapCatMonitor struct {
 	maxLogs        int
 	stopCh         chan struct{}
 	running        bool
+	paused         bool          // true when QQ channel is disabled — skip checks
 	checkInterval  time.Duration
 	reconnecting   bool          // true while a reconnect is in progress
 	offlineCount   int           // consecutive offline checks before triggering reconnect
@@ -144,6 +145,32 @@ func (m *NapCatMonitor) SetMaxReconnect(max int) {
 	m.mu.Unlock()
 }
 
+// Pause suspends monitoring checks (call when QQ channel is disabled)
+func (m *NapCatMonitor) Pause() {
+	m.mu.Lock()
+	m.paused = true
+	m.mu.Unlock()
+	log.Println("[NapCatMonitor] 监控已暂停（QQ 通道已关闭）")
+}
+
+// Resume resumes monitoring checks (call when QQ channel is re-enabled)
+func (m *NapCatMonitor) Resume() {
+	m.mu.Lock()
+	m.paused = false
+	m.offlineCount = 0
+	m.loginFailCount = 0
+	m.status.ReconnectCount = 0
+	m.mu.Unlock()
+	log.Println("[NapCatMonitor] 监控已恢复")
+}
+
+// IsPaused returns whether the monitor is currently paused
+func (m *NapCatMonitor) IsPaused() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.paused
+}
+
 func (m *NapCatMonitor) monitorLoop() {
 	// Initial check after a short delay
 	select {
@@ -168,9 +195,9 @@ func (m *NapCatMonitor) monitorLoop() {
 }
 
 func (m *NapCatMonitor) checkAndUpdate() {
-	// Skip checks while a reconnect is in progress
+	// Skip checks while paused (QQ channel disabled) or reconnecting
 	m.mu.RLock()
-	if m.reconnecting {
+	if m.paused || m.reconnecting {
 		m.mu.RUnlock()
 		return
 	}
@@ -434,6 +461,17 @@ func isNapCatProcessRunning() bool {
 		return false
 	}
 	return isContainerRunning("openclaw-qq")
+}
+
+// StopNapCatPlatform stops NapCat (Docker on Linux, process on Windows)
+func StopNapCatPlatform() {
+	if runtime.GOOS == "windows" {
+		exec.Command("taskkill", "/F", "/IM", "NapCatWinBootMain.exe").Run()
+		exec.Command("taskkill", "/F", "/IM", "napcat.exe").Run()
+		exec.Command("taskkill", "/F", "/IM", "QQ.exe").Run()
+	} else {
+		exec.Command("docker", "stop", "openclaw-qq").Run()
+	}
 }
 
 // restartNapCatPlatform restarts NapCat based on platform

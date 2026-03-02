@@ -62,6 +62,7 @@ type RegistryPlugin struct {
 	Stars       int    `json:"stars,omitempty"`
 	DownloadURL string `json:"downloadUrl,omitempty"`
 	GitURL      string `json:"gitUrl,omitempty"`
+	NpmPackage  string `json:"npmPackage,omitempty"` // npm package name e.g. @openclaw/feishu
 	Screenshot  string `json:"screenshot,omitempty"`
 	Readme      string `json:"readme,omitempty"`
 }
@@ -195,7 +196,55 @@ func (m *Manager) Install(pluginID string, source string) error {
 		return fmt.Errorf("插件 %s 不在仓库中，请提供安装源", pluginID)
 	}
 
-	// Determine download URL
+	// npm package install path (highest priority)
+	npmPkg := source
+	if npmPkg == "" && regPlugin != nil {
+		npmPkg = regPlugin.NpmPackage
+	}
+	if strings.HasPrefix(npmPkg, "@") || (!strings.Contains(npmPkg, "/") && !strings.HasSuffix(npmPkg, ".git") && npmPkg != "") {
+		// Install via npm global
+		if err := m.installFromNpm(npmPkg); err != nil {
+			return fmt.Errorf("npm 安装失败: %v", err)
+		}
+		// Find where npm installed it
+		npmRoot := ""
+		if out, err := exec.Command("npm", "root", "-g").Output(); err == nil {
+			npmRoot = strings.TrimSpace(string(out))
+		}
+		pkgName := npmPkg
+		if idx := strings.LastIndex(pkgName, "/"); idx >= 0 {
+			pkgName = pkgName[idx+1:]
+		}
+		installedDir := ""
+		if npmRoot != "" {
+			// For scoped packages like @openclaw/feishu, dir is @openclaw/feishu
+			installedDir = filepath.Join(npmRoot, npmPkg)
+			if _, err := os.Stat(installedDir); err != nil {
+				installedDir = filepath.Join(npmRoot, pkgName)
+			}
+		}
+		meta := &PluginMeta{ID: pluginID, Name: pluginID}
+		if regPlugin != nil {
+			meta = &regPlugin.PluginMeta
+		}
+		if installedDir == "" {
+			installedDir = npmPkg
+		}
+		installed := &InstalledPlugin{
+			PluginMeta:  *meta,
+			Enabled:     true,
+			InstalledAt: time.Now().Format(time.RFC3339),
+			Source:      "npm",
+			Dir:         installedDir,
+		}
+		m.mu.Lock()
+		m.plugins[meta.ID] = installed
+		m.mu.Unlock()
+		m.savePluginsState()
+		return nil
+	}
+
+	// Determine download URL (git/archive)
 	downloadURL := source
 	if regPlugin != nil {
 		if regPlugin.DownloadURL != "" {
@@ -206,7 +255,7 @@ func (m *Manager) Install(pluginID string, source string) error {
 	}
 
 	if downloadURL == "" {
-		return fmt.Errorf("无法确定插件 %s 的下载地址", pluginID)
+		return fmt.Errorf("无法确定插件 %s 的安装方式，请提供 npm 包名或下载地址", pluginID)
 	}
 
 	pluginDir := filepath.Join(m.pluginsDir, pluginID)
@@ -581,6 +630,20 @@ func (m *Manager) loadCachedRegistry() *Registry {
 	var reg Registry
 	if json.Unmarshal(data, &reg) == nil {
 		return &reg
+	}
+	return nil
+}
+
+func (m *Manager) installFromNpm(pkgName string) error {
+	cmd := exec.Command("npm", "install", "-g", pkgName+"@latest", "--registry=https://registry.npmmirror.com")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		// Retry without mirror
+		cmd2 := exec.Command("npm", "install", "-g", pkgName+"@latest")
+		out2, err2 := cmd2.CombinedOutput()
+		if err2 != nil {
+			return fmt.Errorf("%s\n%s", string(out), string(out2))
+		}
 	}
 	return nil
 }

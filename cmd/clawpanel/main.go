@@ -174,7 +174,7 @@ func runServer(stopCh chan struct{}) {
 			auth.GET("/openclaw/channels", handler.GetChannels(cfg))
 			auth.PUT("/openclaw/channels/:id", handler.SaveChannel(cfg))
 			auth.PUT("/openclaw/plugins/:id", handler.SavePlugin(cfg))
-			auth.POST("/openclaw/toggle-channel", handler.ToggleChannel(cfg, procMgr, sysLog))
+			auth.POST("/openclaw/toggle-channel", handler.ToggleChannel(cfg, procMgr, napcatMon, sysLog))
 
 			// 进程管理
 			auth.POST("/process/start", handler.StartProcess(procMgr, sysLog))

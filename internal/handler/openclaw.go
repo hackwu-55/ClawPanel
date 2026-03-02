@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/zhaoxinyi02/ClawPanel/internal/config"
 	"github.com/zhaoxinyi02/ClawPanel/internal/eventlog"
+	"github.com/zhaoxinyi02/ClawPanel/internal/monitor"
 	"github.com/zhaoxinyi02/ClawPanel/internal/process"
 )
 
@@ -218,7 +219,8 @@ func SavePlugin(cfg *config.Config) gin.HandlerFunc {
 }
 
 // ToggleChannel 切换通道启用/禁用
-func ToggleChannel(cfg *config.Config, procMgr *process.Manager, sysLog ...*eventlog.SystemLogger) gin.HandlerFunc {
+// napcatMon 可选：传入后，关闭 QQ 通道时自动停止 NapCat 并暂停监控，开启时恢复监控
+func ToggleChannel(cfg *config.Config, procMgr *process.Manager, napcatMon *monitor.NapCatMonitor, sysLog ...*eventlog.SystemLogger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req struct {
 			ChannelID string `json:"channelId"`
@@ -268,6 +270,16 @@ func ToggleChannel(cfg *config.Config, procMgr *process.Manager, sysLog ...*even
 		if err := cfg.WriteOpenClawJSON(ocConfig); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
 			return
+		}
+
+		// 如果是 QQ 通道，关闭时停止 NapCat 并暂停监控；开启时恢复监控
+		if req.ChannelID == "qq" && napcatMon != nil {
+			if !req.Enabled {
+				napcatMon.Pause()
+				go monitor.StopNapCatPlatform()
+			} else {
+				napcatMon.Resume()
+			}
 		}
 
 		// 发送网关重启信号
