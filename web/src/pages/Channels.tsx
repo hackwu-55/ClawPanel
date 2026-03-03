@@ -10,7 +10,7 @@ type ChannelDef = {
 };
 
 const CHANNEL_DEFS: ChannelDef[] = [
-  { id: 'qq', label: 'QQ (NapCat)', description: 'QQ个人号，NapCat OneBot11协议', type: 'builtin',
+  { id: 'qq', label: 'QQ (NapCat)', description: 'QQ个人号，NapCat OneBot11协议', type: 'plugin',
     loginMethods: ['qrcode', 'quick', 'password'],
     configFields: [
       { key: 'wsUrl', label: 'WebSocket 地址', type: 'text', placeholder: 'ws://127.0.0.1:3001' },
@@ -31,12 +31,6 @@ const CHANNEL_DEFS: ChannelDef[] = [
       { key: 'notifications.fileUpload', label: '文件上传通知', type: 'toggle', help: '群文件上传通知' },
       { key: 'welcome.enabled', label: '入群欢迎', type: 'toggle', help: '新成员入群时发送欢迎消息' },
       { key: 'welcome.template', label: '欢迎模板', type: 'text', placeholder: '欢迎 {nickname} 加入本群！' },
-    ] },
-  { id: 'wechat', label: '微信', description: '微信个人号 (wechatbot-webhook)', type: 'builtin',
-    loginMethods: ['qrcode'],
-    configFields: [
-      { key: 'webhookUrl', label: 'Webhook URL', type: 'text', placeholder: 'http://openclaw-wechat:3001' },
-      { key: 'token', label: 'API Token', type: 'password' },
     ] },
   { id: 'whatsapp', label: 'WhatsApp', description: 'Baileys QR扫码配对', type: 'builtin', loginMethods: ['qrcode'],
     configFields: [{ key: 'dmPolicy', label: 'DM策略', type: 'select', options: ['pairing','open','allowlist'] }] },
@@ -186,6 +180,7 @@ export default function Channels() {
   const [diagnosing, setDiagnosing] = useState(false);
   const [diagnoseResult, setDiagnoseResult] = useState<any>(null);
   const [restarting, setRestarting] = useState(false);
+  const [installedPlugins, setInstalledPlugins] = useState<any[]>([]);
   const qrPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadNapcatStatus = () => {
@@ -226,13 +221,22 @@ export default function Channels() {
     return sw?.installed || false;
   };
 
+  const loadInstalledPlugins = () => {
+    api.getSkills().then((r: any) => { if (r.ok) setInstalledPlugins(r.plugins || []); }).catch(() => {});
+  };
+
+  const isPluginInstalled = (channelId: string) => {
+    // Check if plugin extension is installed (in extensions dir or plugins.installs)
+    return installedPlugins.some((p: any) => p.id === channelId);
+  };
+
   const reload = () => {
     api.getStatus().then(r => { if (r.ok) setStatus(r); });
     api.getOpenClawConfig().then(r => { if (r.ok) setOcConfig(r.config || {}); });
     api.getRequests().then(r => { if (r.ok) setRequests(r.requests || []); });
   };
 
-  useEffect(() => { reload(); loadSoftware(); loadNapcatStatus(); }, []);
+  useEffect(() => { reload(); loadSoftware(); loadNapcatStatus(); loadInstalledPlugins(); }, []);
   useEffect(() => {
     const timer = setInterval(loadNapcatStatus, 30000);
     return () => clearInterval(timer);
@@ -567,25 +571,21 @@ export default function Channels() {
 
         {/* Channel config */}
         <div className="lg:col-span-3 space-y-6">
-          {/* Container not installed overlay for QQ/WeChat */}
-          {currentDef && ((currentDef.id === 'qq' && !isContainerInstalled('napcat')) || (currentDef.id === 'wechat' && !isContainerInstalled('wechat'))) && softwareList.length > 0 && (
+          {/* QQ NapCat not installed overlay */}
+          {currentDef && currentDef.id === 'qq' && !isContainerInstalled('napcat') && softwareList.length > 0 && (
             <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-8 text-center space-y-4">
               <div className="w-16 h-16 mx-auto rounded-2xl bg-gray-100 dark:bg-gray-700 flex items-center justify-center">
                 <Package size={32} className="text-gray-400" />
               </div>
               <div>
-                <h3 className="text-lg font-bold text-gray-900 dark:text-white">
-                  {currentDef.id === 'qq' ? 'NapCat (QQ个人号)' : '微信机器人'} 未安装
-                </h3>
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white">NapCat (QQ个人号) 未安装</h3>
                 <p className="text-sm text-gray-500 mt-1">
-                  {currentDef.id === 'qq'
-                    ? (serverPlatform === 'windows'
-                      ? '需要安装 NapCat Shell 才能使用 QQ 个人号通道。安装后将自动配置 OneBot11 WebSocket 协议。'
-                      : '需要安装 NapCat Docker 容器才能使用 QQ 个人号通道。安装后将自动配置 OneBot11 WebSocket 协议。')
-                    : '需要安装 wechatbot-webhook Docker 容器才能使用微信个人号通道。安装后将自动配置回调地址。'}
+                  {serverPlatform === 'windows'
+                    ? '需要安装 NapCat Shell 才能使用 QQ 个人号通道。安装后将自动配置 OneBot11 WebSocket 协议。'
+                    : '需要安装 NapCat Docker 容器才能使用 QQ 个人号通道。安装后将自动配置 OneBot11 WebSocket 协议。'}
                 </p>
               </div>
-              {(currentDef.id === 'qq' && serverPlatform === 'windows') ? (
+              {serverPlatform === 'windows' ? (
                 <button
                   onClick={() => handleInstallContainer('napcat')}
                   disabled={installingSw !== null}
@@ -612,7 +612,29 @@ export default function Channels() {
             </div>
           )}
 
-          {currentDef && !((currentDef.id === 'qq' && !isContainerInstalled('napcat') && softwareList.length > 0) || (currentDef.id === 'wechat' && !isContainerInstalled('wechat') && softwareList.length > 0)) && (
+          {/* Plugin channel not installed overlay (feishu, qqbot, dingtalk, wecom, etc.) */}
+          {currentDef && currentDef.type === 'plugin' && currentDef.id !== 'qq' && !isPluginInstalled(currentDef.id) && (
+            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-8 text-center space-y-4">
+              <div className="w-16 h-16 mx-auto rounded-2xl bg-gray-100 dark:bg-gray-700 flex items-center justify-center">
+                <Package size={32} className="text-gray-400" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white">{currentDef.label} 插件未安装</h3>
+                <p className="text-sm text-gray-500 mt-1">
+                  需要先安装 {currentDef.label} 插件才能配置此通道。请前往「插件中心」安装。
+                </p>
+              </div>
+              <a href="#/plugins" className="inline-flex items-center gap-2 px-6 py-3 text-sm font-medium rounded-xl bg-violet-600 text-white hover:bg-violet-700 transition-all shadow-lg shadow-violet-200 dark:shadow-none hover:shadow-xl">
+                <Download size={16} />
+                前往插件中心安装
+              </a>
+            </div>
+          )}
+
+          {currentDef && !(
+            (currentDef.id === 'qq' && !isContainerInstalled('napcat') && softwareList.length > 0) ||
+            (currentDef.type === 'plugin' && currentDef.id !== 'qq' && !isPluginInstalled(currentDef.id))
+          ) && (
             <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 p-6 space-y-6">
               <div className="flex items-center justify-between pb-4 border-b border-gray-100 dark:border-gray-800">
                 <div className="flex items-center gap-4">

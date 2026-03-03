@@ -138,15 +138,6 @@ func GetStatus(db *sql.DB, cfg *config.Config, procMgr *process.Manager) gin.Han
 			}
 		}
 
-		// WeChat 状态
-		wechatInfo := gin.H{"connected": false, "loggedIn": false}
-		if wechatR, err := wechatApiCallSafe(cfg, "GET", "/loginCheck", nil); err == nil {
-			if success, ok := wechatR["success"].(bool); ok && success {
-				wechatInfo["connected"] = true
-				wechatInfo["loggedIn"] = true
-			}
-		}
-
 		c.JSON(http.StatusOK, gin.H{
 			"ok": true,
 			"openclaw": gin.H{
@@ -155,7 +146,6 @@ func GetStatus(db *sql.DB, cfg *config.Config, procMgr *process.Manager) gin.Han
 				"enabledChannels": channels,
 			},
 			"napcat":  napcatInfo,
-			"wechat":  wechatInfo,
 			"process": procStatus,
 			"admin": gin.H{
 				"uptime":   int64(time.Since(startTime).Seconds()),
@@ -184,36 +174,6 @@ func napcatApiCallSafe(cfg *config.Config, method, path string, body interface{}
 	if cred != "" {
 		req.Header.Set("Authorization", "Bearer "+cred)
 	}
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	data, _ := io.ReadAll(resp.Body)
-	var result map[string]interface{}
-	json.Unmarshal(data, &result)
-	return result, nil
-}
-
-// wechatApiCallSafe calls WeChat API with a short timeout
-func wechatApiCallSafe(cfg *config.Config, method, path string, body interface{}) (map[string]interface{}, error) {
-	adminCfg := loadAdminConfig(cfg)
-	wechatUrl := "http://127.0.0.1:3002"
-	wechatToken := "openclaw-wechat"
-	if wc, ok := adminCfg["wechat"].(map[string]interface{}); ok {
-		if u, ok := wc["apiUrl"].(string); ok && u != "" {
-			wechatUrl = u
-		}
-		if t, ok := wc["token"].(string); ok && t != "" {
-			wechatToken = t
-		}
-	}
-	req, err := http.NewRequest(method, wechatUrl+path, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+wechatToken)
 	client := &http.Client{Timeout: 3 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -294,26 +254,34 @@ func GetSystemEnv(cfg *config.Config) gin.HandlerFunc {
 
 		// Fallback OS detection (platform-aware)
 		if runtime.GOOS == "windows" {
-			// Windows: use PowerShell for system info
+			// Windows: use PowerShell for system info (force UTF-8 output)
+			utf8Prefix := `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; `
 			if _, ok := osInfo["distro"]; !ok {
-				distro := runCmd("powershell", "-NoProfile", "-Command", `(Get-CimInstance Win32_OperatingSystem).Caption`)
+				distro := runCmd("powershell", "-NoProfile", "-Command", utf8Prefix+`(Get-CimInstance Win32_OperatingSystem).Caption`)
 				if distro != "" {
 					osInfo["distro"] = distro
 				}
 			}
 			if _, ok := osInfo["release"]; !ok {
-				release := runCmd("powershell", "-NoProfile", "-Command", `(Get-CimInstance Win32_OperatingSystem).Version`)
+				release := runCmd("powershell", "-NoProfile", "-Command", utf8Prefix+`(Get-CimInstance Win32_OperatingSystem).Version`)
 				if release != "" {
 					osInfo["release"] = release
 				}
 			}
 			// Kernel version
-			kernel := runCmd("powershell", "-NoProfile", "-Command", `(Get-CimInstance Win32_OperatingSystem).BuildNumber`)
+			kernel := runCmd("powershell", "-NoProfile", "-Command", utf8Prefix+`(Get-CimInstance Win32_OperatingSystem).BuildNumber`)
 			if kernel != "" {
 				osInfo["kernel"] = "Build " + kernel
 			}
-			// User info
-			userInfo := runCmd("whoami")
+			// User info: show actual logged-in user, not SYSTEM service account
+			userInfo := runCmd("powershell", "-NoProfile", "-Command", utf8Prefix+`(Get-CimInstance Win32_ComputerSystem).UserName`)
+			if userInfo == "" || strings.Contains(strings.ToLower(userInfo), "system") {
+				// Fallback: find first interactive logon session user
+				userInfo = runCmd("powershell", "-NoProfile", "-Command", utf8Prefix+`(query user 2>$null | Select-String '^\s*\S+' | Select-Object -First 1).ToString().Trim().Split()[0]`)
+			}
+			if userInfo == "" {
+				userInfo = runCmd("whoami")
+			}
 			if userInfo != "" {
 				osInfo["userInfo"] = userInfo
 			}

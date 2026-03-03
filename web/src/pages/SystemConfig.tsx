@@ -1021,10 +1021,15 @@ function SudoPasswordSection() {
   const [configured, setConfigured] = useState(false);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
+  const [platform, setPlatform] = useState('');
 
   useEffect(() => {
     api.getSudoPassword().then(r => { if (r.ok) setConfigured(r.configured); });
+    api.getSoftwareList().then(r => { if (r.ok && r.platform) setPlatform(r.platform); });
   }, []);
+
+  // Windows doesn't use sudo - hide this section entirely
+  if (platform === 'windows') return null;
 
   const handleSave = async () => {
     setSaving(true);

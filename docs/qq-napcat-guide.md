@@ -8,7 +8,7 @@
 └──────────────────────────────┬──────────────────────────────────┘
                                │ QQ 协议
                                ▼
-┌─────────────────────────────────────────────────────────────────┐
+┌──────────────────────────────────────────────────────────────────┐
 │                    NapCat（QQ 协议实现层）                        │
 │                                                                  │
 │  Linux:  Docker 容器 "openclaw-qq"                               │
@@ -16,12 +16,12 @@
 │                                                                  │
 │  Windows: NapCat Shell 进程 (NapCatWinBootMain.exe)              │
 │           本地监听同样的端口                                      │
-└──────────────────────────────┬──────────────────────────────────┘
+└──────────────────────────────┬───────────────────────────────────┘
                                │ OneBot v11 WebSocket
                                │ ws://127.0.0.1:3001
                                ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                  OpenClaw（AI 助手网关）                          │
+┌──────────────────────────────────────────────────────────────────┐
+│                  OpenClaw（AI 助手网关）                           │
 │                                                                  │
 │  openclaw-gateway 进程，监听端口 18789                            │
 │  配置文件: ~/openclaw/config/openclaw.json                        │
@@ -30,16 +30,17 @@
 │    channels.qq.enabled = true                                    │
 │    channels.qq.wsUrl   = "ws://127.0.0.1:3001"                   │
 │    plugins.entries.qq.enabled = true                             │
-└──────────────────────────────┬──────────────────────────────────┘
+│    plugins.installs.qq.installPath = <openclaw扩展目录>/qq        │
+└──────────────────────────────┬───────────────────────────────────┘
                                │ REST API / WebSocket
-                               │ http://127.0.0.1:19527
+                               │ http://127.0.0.1:18789
                                ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                  ClawPanel（管理面板）                            │
+┌──────────────────────────────────────────────────────────────────┐
+│                  ClawPanel（管理面板）                             │
 │                                                                  │
 │  Go 后端，默认端口 19527                                          │
 │  负责: 配置管理 / 进程监控 / NapCat 状态检测 / 自动重连           │
-└─────────────────────────────────────────────────────────────────┘
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ## 二、各组件的职责
@@ -117,13 +118,15 @@
 ### Linux / macOS（一键修复）
 
 ```bash
+# 下载并运行诊断修复脚本
 curl -sSO https://raw.githubusercontent.com/zhaoxinyi02/ClawPanel/main/scripts/fix-qq-napcat.sh
 sudo bash fix-qq-napcat.sh
 ```
 
-### Windows（一键修复，管理员 PowerShell）
+### Windows（一键修复）
 
 ```powershell
+# 以管理员身份运行 PowerShell
 irm https://raw.githubusercontent.com/zhaoxinyi02/ClawPanel/main/scripts/fix-qq-napcat.ps1 | iex
 ```
 
@@ -134,17 +137,20 @@ irm https://raw.githubusercontent.com/zhaoxinyi02/ClawPanel/main/scripts/fix-qq-
    ```bash
    npm install -g openclaw@latest --registry=https://registry.npmmirror.com
    ```
-3. **在 ClawPanel 中安装 NapCat**：软件环境 → 安装 NapCat
-4. **启用 QQ 通道**：ClawPanel → 通道配置 → QQ (NapCat) → 启用
-5. **扫码登录**：ClawPanel → NapCat 管理 → 登录 → 扫描二维码
+3. **在 ClawPanel 中安装 NapCat**
+   - 打开 ClawPanel → 软件环境 → 安装 NapCat
+4. **启用 QQ 通道**
+   - 打开 ClawPanel → 通道配置 → QQ (NapCat) → 启用
+5. **扫码登录**
+   - ClawPanel → NapCat 管理 → 登录 → 扫描二维码
 
 ## 六、常见问题与修复
 
-### 问题 1：日志持续出现 WS 连接/断开
+### 问题 1：OpenClaw 日志持续出现 WS 连接/断开
 
-**原因**：QQ 通道关闭但 NapCat 容器仍在运行，OpenClaw 不断尝试重连。
+**原因**：QQ 通道关闭但 NapCat 容器仍在运行，OpenClaw 网关不断尝试重连。
 
-**修复（v5.0.15+）**：已自动修复。关闭 QQ 通道时 ClawPanel 会同时停止 NapCat 容器，无需手动处理。
+**修复（v5.0.15+）**：已自动修复。关闭 QQ 通道时 ClawPanel 会同时停止 NapCat 容器，重新启用时再恢复。
 
 ### 问题 2：`unknown channel id: qq`
 
@@ -152,7 +158,9 @@ irm https://raw.githubusercontent.com/zhaoxinyi02/ClawPanel/main/scripts/fix-qq-
 
 **修复**：
 ```bash
+# 修复文件权限
 chown -R root:root $(npm root -g)/openclaw/extensions/qq
+
 # 或运行一键修复脚本
 sudo bash fix-qq-napcat.sh
 ```
@@ -163,17 +171,24 @@ sudo bash fix-qq-napcat.sh
 
 **修复**：
 ```bash
+# 检查容器日志
 docker logs openclaw-qq --tail 50
+
+# 检查端口配置
 docker exec openclaw-qq cat /app/napcat/config/onebot11.json
 ```
 
-### 问题 4：QQ 登录掉线 / 二维码过期
+### 问题 4：登录二维码过期或 QQ 掉线
 
-NapCat 使用 QQ 个人号协议，存在被风控风险，建议使用专用小号。登录过期后：ClawPanel → NapCat 管理 → 重新登录。
+**说明**：NapCat 使用 QQ 个人号协议，存在被封号风险，建议使用小号。登录过期需重新扫码。
 
-### 问题 5：Windows NapCat Shell 无法启动
+**修复**：ClawPanel → NapCat 管理 → 重新登录
 
+### 问题 5：Windows 版 NapCat Shell 无法启动
+
+**修复**：
 ```powershell
+# 运行诊断脚本
 irm https://raw.githubusercontent.com/zhaoxinyi02/ClawPanel/main/scripts/fix-qq-napcat.ps1 | iex
 ```
 
@@ -184,7 +199,7 @@ irm https://raw.githubusercontent.com/zhaoxinyi02/ClawPanel/main/scripts/fix-qq-
 | 3001 | NapCat OneBot v11 WebSocket 服务端 | OpenClaw 连接 |
 | 3000 | NapCat HTTP 接口 | OpenClaw 调用 |
 | 6099 | NapCat WebUI（扫码登录界面） | ClawPanel / 浏览器 |
-| 18789 | OpenClaw 网关 | ClawPanel |
+| 18789 | OpenClaw 网关 HTTP | ClawPanel |
 | 19527 | ClawPanel 面板 | 浏览器 |
 
 > **安全提示**：上述端口仅供本机内部通讯使用，请勿将 3001/3000/6099 暴露到公网。

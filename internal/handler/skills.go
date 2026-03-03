@@ -119,7 +119,7 @@ func GetSkills(cfg *config.Config) gin.HandlerFunc {
 		// 2. Workspace work/skills
 		workDir := cfg.OpenClawWork
 		if workDir == "" {
-			workDir = filepath.Join(filepath.Dir(cfg.OpenClawDir), "openclaw", "work")
+			workDir = filepath.Join(filepath.Dir(cfg.OpenClawDir), "work")
 		}
 		scanSkillDir(filepath.Join(workDir, "skills"), "workspace", false, blockSet, &skills, seen)
 

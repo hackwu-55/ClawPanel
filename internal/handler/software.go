@@ -226,6 +226,18 @@ func detectOpenClawVersion(cfg *config.Config) string {
 			filepath.Join(home, "AppData", "Roaming", "npm", "openclaw.cmd"),
 			`C:\Program Files\nodejs\openclaw.cmd`,
 		)
+		// Scan real user profiles (when running as SYSTEM service)
+		usersDir := `C:\Users`
+		if entries, err := os.ReadDir(usersDir); err == nil {
+			skip := map[string]bool{"Public": true, "Default": true, "Default User": true, "All Users": true}
+			for _, e := range entries {
+				if e.IsDir() && !skip[e.Name()] {
+					commonPaths = append(commonPaths,
+						filepath.Join(usersDir, e.Name(), "AppData", "Roaming", "npm", "openclaw.cmd"),
+					)
+				}
+			}
+		}
 		// SYSTEM account path (when running as Windows service)
 		systemRoot := os.Getenv("SYSTEMROOT")
 		if systemRoot != "" {

@@ -77,7 +77,7 @@ func GetIdentityDocs(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		workDir := cfg.OpenClawWork
 		if workDir == "" {
-			workDir = filepath.Join(filepath.Dir(cfg.OpenClawDir), "openclaw", "work")
+			workDir = filepath.Join(filepath.Dir(cfg.OpenClawDir), "work")
 		}
 
 		identityFiles := []string{"AGENTS.md", "BOOTSTRAP.md", "HEARTBEAT.md", "IDENTITY.md", "SOUL.md", "TOOLS.md", "USER.md"}
@@ -123,7 +123,7 @@ func SaveIdentityDoc(cfg *config.Config) gin.HandlerFunc {
 
 		workDir := cfg.OpenClawWork
 		if workDir == "" {
-			workDir = filepath.Join(filepath.Dir(cfg.OpenClawDir), "openclaw", "work")
+			workDir = filepath.Join(filepath.Dir(cfg.OpenClawDir), "work")
 		}
 
 		resolved, _ := filepath.Abs(req.Path)

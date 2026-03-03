@@ -85,13 +85,25 @@ func Load() (*Config, error) {
 	}
 
 	// 设置默认工作目录（基于 OpenClawDir 的父目录）
-	parentDir := filepath.Dir(cfg.OpenClawDir) // e.g. /home/user/openclaw
+	parentDir := filepath.Dir(cfg.OpenClawDir) // e.g. /home/user/openclaw or C:\Users\xxx\.openclaw -> C:\Users\xxx
 	if cfg.OpenClawWork == "" || !dirExists(cfg.OpenClawWork) {
-		cfg.OpenClawWork = filepath.Join(parentDir, "work")
+		cfg.OpenClawWork = findFirstExistingDir(
+			filepath.Join(parentDir, "work"),
+			filepath.Join(parentDir, "openclaw", "work"),
+		)
+		if cfg.OpenClawWork == "" {
+			cfg.OpenClawWork = filepath.Join(parentDir, "work")
+		}
 	}
 	// 设置默认 App 目录
 	if cfg.OpenClawApp == "" || !dirExists(cfg.OpenClawApp) {
-		cfg.OpenClawApp = filepath.Join(parentDir, "app")
+		cfg.OpenClawApp = findFirstExistingDir(
+			filepath.Join(parentDir, "app"),
+			filepath.Join(parentDir, "openclaw", "app"),
+		)
+		if cfg.OpenClawApp == "" {
+			cfg.OpenClawApp = filepath.Join(parentDir, "app")
+		}
 	}
 
 	// 保存配置（确保文件存在）
@@ -144,14 +156,72 @@ func getDataDir() string {
 // getDefaultOpenClawDir 获取默认 OpenClaw 配置目录
 func getDefaultOpenClawDir() string {
 	home, _ := os.UserHomeDir()
-	switch runtime.GOOS {
-	case "windows":
-		return filepath.Join(home, ".openclaw")
-	case "darwin":
-		return filepath.Join(home, ".openclaw")
-	default:
-		return filepath.Join(home, ".openclaw")
+
+	// Build candidate list: check multiple possible locations
+	candidates := []string{
+		filepath.Join(home, ".openclaw"),
 	}
+
+	if runtime.GOOS == "windows" {
+		// When running as SYSTEM service, os.UserHomeDir() returns
+		// C:\Windows\system32\config\systemprofile — not the real user.
+		// Probe all user profiles for .openclaw with openclaw.json.
+		for _, userHome := range getWindowsUserHomes() {
+			candidates = append(candidates, filepath.Join(userHome, ".openclaw"))
+		}
+	} else {
+		// Linux/macOS: also check /home/*/openclaw/config, /root/.openclaw
+		if home != "/root" {
+			candidates = append(candidates, "/root/.openclaw")
+		}
+		entries, _ := os.ReadDir("/home")
+		for _, e := range entries {
+			if e.IsDir() {
+				candidates = append(candidates, filepath.Join("/home", e.Name(), ".openclaw"))
+			}
+		}
+	}
+
+	// Return the first candidate that contains openclaw.json
+	for _, c := range candidates {
+		if _, err := os.Stat(filepath.Join(c, "openclaw.json")); err == nil {
+			return c
+		}
+	}
+	// Fallback: return the first candidate that exists as a directory
+	for _, c := range candidates {
+		if info, err := os.Stat(c); err == nil && info.IsDir() {
+			return c
+		}
+	}
+	// Ultimate fallback
+	return filepath.Join(home, ".openclaw")
+}
+
+// getWindowsUserHomes returns home directories of real user profiles on Windows
+func getWindowsUserHomes() []string {
+	if runtime.GOOS != "windows" {
+		return nil
+	}
+	var homes []string
+	// Try USERPROFILE env first (may be set by installer)
+	if up := os.Getenv("USERPROFILE"); up != "" {
+		homes = append(homes, up)
+	}
+	// Scan C:\Users\* for real user profiles
+	usersDir := `C:\Users`
+	entries, err := os.ReadDir(usersDir)
+	if err != nil {
+		return homes
+	}
+	skip := map[string]bool{"Public": true, "Default": true, "Default User": true, "All Users": true}
+	for _, e := range entries {
+		if !e.IsDir() || skip[e.Name()] {
+			continue
+		}
+		homes = append(homes, filepath.Join(usersDir, e.Name()))
+	}
+	return homes
 }
 
 // ReadOpenClawJSON 读取 openclaw.json
@@ -190,6 +260,16 @@ func dirExists(path string) bool {
 	return err == nil && info.IsDir()
 }
 
+// findFirstExistingDir returns the first directory path that exists, or "" if none
+func findFirstExistingDir(paths ...string) string {
+	for _, p := range paths {
+		if dirExists(p) {
+			return p
+		}
+	}
+	return ""
+}
+
 // OpenClawConfigExists 检查 openclaw.json 是否存在
 func (c *Config) OpenClawConfigExists() bool {
 	cfgPath := filepath.Join(c.OpenClawDir, "openclaw.json")
@@ -214,6 +294,13 @@ func (c *Config) OpenClawInstalled() bool {
 		winPaths := []string{
 			filepath.Join(home, "AppData", "Roaming", "npm", "openclaw.cmd"),
 			filepath.Join(home, "AppData", "Roaming", "npm", "openclaw"),
+		}
+		// Also check real user profiles (when running as SYSTEM service)
+		for _, userHome := range getWindowsUserHomes() {
+			winPaths = append(winPaths,
+				filepath.Join(userHome, "AppData", "Roaming", "npm", "openclaw.cmd"),
+				filepath.Join(userHome, "AppData", "Roaming", "npm", "openclaw"),
+			)
 		}
 		// Also check SYSTEM account paths (when running as Windows service)
 		systemProfile := os.Getenv("SYSTEMROOT")
