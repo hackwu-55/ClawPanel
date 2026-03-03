@@ -803,6 +803,17 @@ npm config set registry https://registry.npmmirror.com 2>$null
 $npmPrefix = npm config get prefix 2>$null
 Write-Output "📁 npm 全局安装目录: $npmPrefix"
 
+# Create npm global directory if it doesn't exist (critical for first-time npm users)
+if ($npmPrefix -and -not (Test-Path $npmPrefix)) {
+  Write-Output "📁 创建 npm 全局目录: $npmPrefix"
+  New-Item -ItemType Directory -Path $npmPrefix -Force | Out-Null
+}
+$npmModules = Join-Path $npmPrefix "node_modules"
+if (-not (Test-Path $npmModules)) {
+  Write-Output "📁 创建 node_modules 目录: $npmModules"
+  New-Item -ItemType Directory -Path $npmModules -Force | Out-Null
+}
+
 Write-Output "📥 正在通过 npm 安装 OpenClaw..."
 npm install -g openclaw@latest --registry=https://registry.npmmirror.com 2>&1
 if ($LASTEXITCODE -ne 0) {
@@ -848,7 +859,39 @@ if ($ocCmd) {
 }
 
 Write-Output "📝 初始化配置..."
-try { openclaw init 2>$null } catch { Write-Output "初始化跳过（可能已存在配置）" }
+# Create basic openclaw.json if it doesn't exist
+$openclawDir = Join-Path $env:USERPROFILE ".openclaw"
+$openclawConfig = Join-Path $openclawDir "openclaw.json"
+if (-not (Test-Path $openclawDir)) {
+  New-Item -ItemType Directory -Path $openclawDir -Force | Out-Null
+}
+if (-not (Test-Path $openclawConfig)) {
+  Write-Output "📝 创建基础配置文件..."
+  $ocVer = & openclaw --version 2>$null
+  if (-not $ocVer) { $ocVer = "2026.3.2" }
+  $workDir = Join-Path $env:USERPROFILE "work"
+  @"
+{
+  "meta": {
+    "version": "$ocVer",
+    "lastTouchedVersion": "$ocVer"
+  },
+  "channels": {
+    "qq": {
+      "enabled": false
+    }
+  },
+  "gateway": {
+    "mode": "local",
+    "port": 19000
+  },
+  "workspace": {
+    "path": "$($workDir -replace '\\', '\\')"
+  }
+}
+"@ | Set-Content $openclawConfig -Force
+  Write-Output "✅ 配置文件已创建: $openclawConfig"
+}
 Write-Output "✅ 全部完成"
 `
 			} else {
