@@ -227,23 +227,41 @@ func getWindowsUserHomes() []string {
 		return nil
 	}
 	var homes []string
-	// Try USERPROFILE env first (may be set by installer)
-	if up := os.Getenv("USERPROFILE"); up != "" {
-		homes = append(homes, up)
-	}
-	// Scan C:\Users\* for real user profiles
+	
+	// Scan C:\Users\* for real user profiles FIRST (prioritize real users)
 	usersDir := `C:\Users`
 	entries, err := os.ReadDir(usersDir)
-	if err != nil {
-		return homes
-	}
-	skip := map[string]bool{"Public": true, "Default": true, "Default User": true, "All Users": true}
-	for _, e := range entries {
-		if !e.IsDir() || skip[e.Name()] {
-			continue
+	if err == nil {
+		skip := map[string]bool{"Public": true, "Default": true, "Default User": true, "All Users": true}
+		for _, e := range entries {
+			if !e.IsDir() || skip[e.Name()] {
+				continue
+			}
+			userPath := filepath.Join(usersDir, e.Name())
+			// Skip SYSTEM account paths (C:\Windows\system32\config\systemprofile)
+			if !strings.Contains(userPath, "system32") && !strings.Contains(userPath, "systemprofile") {
+				homes = append(homes, userPath)
+			}
 		}
-		homes = append(homes, filepath.Join(usersDir, e.Name()))
 	}
+	
+	// Only add USERPROFILE env if it's not a SYSTEM path and not already in list
+	if up := os.Getenv("USERPROFILE"); up != "" {
+		if !strings.Contains(up, "system32") && !strings.Contains(up, "systemprofile") {
+			// Check if not already added
+			found := false
+			for _, h := range homes {
+				if h == up {
+					found = true
+					break
+				}
+			}
+			if !found {
+				homes = append(homes, up)
+			}
+		}
+	}
+	
 	return homes
 }
 
