@@ -41,6 +41,11 @@ Thumbs.db
 demo/
 ClawPanel_logo/
 
+# Local agent/tooling notes (keep local only)
+local/
+CLAUDE.md
+Claude.md
+
 # Blog posts (not tracked in git)
 docs/blog-*.md
 
