@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -84,6 +85,68 @@ func TestGetSessionsAgentAllAggregates(t *testing.T) {
 	}
 	if resp.Sessions[0].AgentID != "work" || resp.Sessions[0].SessionID != "session-work" {
 		t.Fatalf("sessions should be aggregated and sorted by updatedAt desc")
+	}
+}
+
+func TestGetSessionsAgentAllIgnoresOrphanAgentDirsWhenExplicitListExists(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	dir := t.TempDir()
+	cfg := &config.Config{OpenClawDir: dir}
+	writeJSON(t, filepath.Join(dir, "openclaw.json"), map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main"},
+			},
+		},
+	})
+
+	mainSessionFile := filepath.Join(dir, "agents", "main", "sessions", "main.jsonl")
+	if err := os.MkdirAll(filepath.Dir(mainSessionFile), 0755); err != nil {
+		t.Fatalf("mkdir main sessions dir: %v", err)
+	}
+	_ = os.WriteFile(mainSessionFile, []byte(`{"type":"message","id":"1","message":{"role":"user","content":"hello"}}`+"\n"), 0644)
+	writeJSON(t, filepath.Join(dir, "agents", "main", "sessions", "sessions.json"), map[string]interface{}{
+		"main-key": map[string]interface{}{
+			"sessionId":   "session-main",
+			"updatedAt":   float64(1000),
+			"sessionFile": mainSessionFile,
+		},
+	})
+
+	orphanSessionFile := filepath.Join(dir, "agents", "work", "sessions", "work.jsonl")
+	if err := os.MkdirAll(filepath.Dir(orphanSessionFile), 0755); err != nil {
+		t.Fatalf("mkdir orphan sessions dir: %v", err)
+	}
+	_ = os.WriteFile(orphanSessionFile, []byte(`{"type":"assistant","id":"2","message":{"role":"assistant","content":"ghost"}}`+"\n"), 0644)
+	writeJSON(t, filepath.Join(dir, "agents", "work", "sessions", "sessions.json"), map[string]interface{}{
+		"work-key": map[string]interface{}{
+			"sessionId":   "session-work",
+			"updatedAt":   float64(2000),
+			"sessionFile": orphanSessionFile,
+		},
+	})
+
+	r := gin.New()
+	r.GET("/sessions", GetSessions(cfg))
+	req := httptest.NewRequest(http.MethodGet, "/sessions?agent=all", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		OK       bool          `json:"ok"`
+		Sessions []SessionInfo `json:"sessions"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Sessions) != 1 || resp.Sessions[0].AgentID != "main" {
+		t.Fatalf("expected only explicit main sessions, got %+v", resp.Sessions)
 	}
 }
 
@@ -241,6 +304,112 @@ func TestGetOpenClawAgentsMarksSynthesizedDiskAgentsImplicit(t *testing.T) {
 	}
 }
 
+func TestDeleteOpenClawAgentKeepsSessionsWhenConfigWriteFails(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod-based write failure injection is unreliable on Windows")
+	}
+
+	dir := t.TempDir()
+	cfg := &config.Config{OpenClawDir: dir}
+	writeJSON(t, filepath.Join(dir, "openclaw.json"), map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main"},
+				map[string]interface{}{"id": "work"},
+			},
+		},
+	})
+	writeJSON(t, filepath.Join(dir, "agents", "work", "sessions", "sessions.json"), map[string]interface{}{
+		"work-key": map[string]interface{}{
+			"sessionId": "session-work",
+		},
+	})
+	configPath := filepath.Join(dir, "openclaw.json")
+	if err := os.Chmod(configPath, 0400); err != nil {
+		t.Fatalf("chmod openclaw.json read-only: %v", err)
+	}
+	if err := os.Chmod(dir, 0500); err != nil {
+		t.Fatalf("chmod openclaw dir read-only: %v", err)
+	}
+	defer func() {
+		_ = os.Chmod(dir, 0700)
+		_ = os.Chmod(configPath, 0600)
+	}()
+
+	r := gin.New()
+	r.DELETE("/openclaw/agents/:id", DeleteOpenClawAgent(cfg))
+	req := httptest.NewRequest(http.MethodDelete, "/openclaw/agents/work", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "agents", "work", "sessions", "sessions.json")); err != nil {
+		t.Fatalf("sessions should be restored after config write failure: %v", err)
+	}
+
+	saved, err := cfg.ReadOpenClawJSON()
+	if err != nil {
+		t.Fatalf("read openclaw.json: %v", err)
+	}
+	agents, _ := saved["agents"].(map[string]interface{})
+	list, _ := agents["list"].([]interface{})
+	if len(list) != 2 {
+		t.Fatalf("agent list should remain unchanged on failure, got %#v", list)
+	}
+}
+
+func TestGetOpenClawAgentsFallsBackToEffectiveDefaultWhenConfiguredDefaultInvalid(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	dir := t.TempDir()
+	cfg := &config.Config{OpenClawDir: dir}
+	writeJSON(t, filepath.Join(dir, "openclaw.json"), map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "ghost",
+			"list": []interface{}{
+				map[string]interface{}{"id": "work"},
+				map[string]interface{}{"id": "main"},
+			},
+		},
+	})
+
+	r := gin.New()
+	r.GET("/openclaw/agents", GetOpenClawAgents(cfg))
+	req := httptest.NewRequest(http.MethodGet, "/openclaw/agents", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		OK     bool `json:"ok"`
+		Agents struct {
+			Default string                   `json:"default"`
+			List    []map[string]interface{} `json:"list"`
+		} `json:"agents"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !resp.OK {
+		t.Fatalf("expected ok=true")
+	}
+	if resp.Agents.Default != "work" {
+		t.Fatalf("expected effective default work, got %q", resp.Agents.Default)
+	}
+	if len(resp.Agents.List) != 2 || resp.Agents.List[0]["default"] != true {
+		t.Fatalf("expected first explicit agent to be marked default, got %#v", resp.Agents.List)
+	}
+}
+
 func TestPreviewRouteRespectsBindingOrder(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
@@ -338,6 +507,37 @@ func TestSaveCronJobsRejectsUnknownSessionTarget(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for invalid sessionTarget, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSaveCronJobsRejectsOrphanAgentDirWhenExplicitListExists(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	dir := t.TempDir()
+	cfg := &config.Config{OpenClawDir: dir}
+	writeJSON(t, filepath.Join(dir, "openclaw.json"), map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main"},
+			},
+		},
+	})
+	if err := os.MkdirAll(filepath.Join(dir, "agents", "work"), 0755); err != nil {
+		t.Fatalf("mkdir orphan work dir: %v", err)
+	}
+
+	r := gin.New()
+	r.PUT("/system/cron", SaveCronJobs(cfg))
+	body := []byte(`{"jobs":[{"id":"job_1","name":"orphan-target","enabled":true,"schedule":{"kind":"cron","expr":"0 9 * * *"},"sessionTarget":"work","wakeMode":"now","payload":{"kind":"agentTurn","message":"hi"},"state":{},"createdAtMs":1}]}`)
+	req := httptest.NewRequest(http.MethodPut, "/system/cron", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for orphan agent dir target, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -677,6 +877,175 @@ func TestGetSessionsFallsBackWhenConfiguredDefaultInvalid(t *testing.T) {
 	}
 	if len(resp.Sessions) != 1 || resp.Sessions[0].AgentID != "work" {
 		t.Fatalf("expected fallback to existing work agent, got %+v", resp.Sessions)
+	}
+}
+
+func TestGetSessionsFallbackPreservesExplicitListOrder(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	dir := t.TempDir()
+	cfg := &config.Config{OpenClawDir: dir}
+	writeJSON(t, filepath.Join(dir, "openclaw.json"), map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "ghost",
+			"list": []interface{}{
+				map[string]interface{}{"id": "work"},
+				map[string]interface{}{"id": "main"},
+			},
+		},
+	})
+
+	workSessionFile := filepath.Join(dir, "agents", "work", "sessions", "s_work.jsonl")
+	if err := os.MkdirAll(filepath.Dir(workSessionFile), 0755); err != nil {
+		t.Fatalf("mkdir work sessions dir: %v", err)
+	}
+	_ = os.WriteFile(workSessionFile, []byte(`{"type":"assistant","id":"2","message":{"role":"assistant","content":"hello"}}`+"\n"), 0644)
+	writeJSON(t, filepath.Join(dir, "agents", "work", "sessions", "sessions.json"), map[string]interface{}{
+		"work-key": map[string]interface{}{
+			"sessionId":   "session-work",
+			"chatType":    "group",
+			"updatedAt":   float64(2000),
+			"sessionFile": workSessionFile,
+		},
+	})
+
+	mainSessionFile := filepath.Join(dir, "agents", "main", "sessions", "s_main.jsonl")
+	if err := os.MkdirAll(filepath.Dir(mainSessionFile), 0755); err != nil {
+		t.Fatalf("mkdir main sessions dir: %v", err)
+	}
+	_ = os.WriteFile(mainSessionFile, []byte(`{"type":"assistant","id":"3","message":{"role":"assistant","content":"world"}}`+"\n"), 0644)
+	writeJSON(t, filepath.Join(dir, "agents", "main", "sessions", "sessions.json"), map[string]interface{}{
+		"main-key": map[string]interface{}{
+			"sessionId":   "session-main",
+			"chatType":    "group",
+			"updatedAt":   float64(1000),
+			"sessionFile": mainSessionFile,
+		},
+	})
+
+	r := gin.New()
+	r.GET("/sessions", GetSessions(cfg))
+	req := httptest.NewRequest(http.MethodGet, "/sessions", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		OK       bool          `json:"ok"`
+		Sessions []SessionInfo `json:"sessions"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Sessions) != 1 || resp.Sessions[0].AgentID != "work" {
+		t.Fatalf("expected fallback to first explicit agent work, got %+v", resp.Sessions)
+	}
+}
+
+func TestGetSessionsFallbackIgnoresOrphanAgentDirWhenExplicitListExists(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	dir := t.TempDir()
+	cfg := &config.Config{OpenClawDir: dir}
+	writeJSON(t, filepath.Join(dir, "openclaw.json"), map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "ghost",
+			"list": []interface{}{
+				map[string]interface{}{"id": "work"},
+			},
+		},
+	})
+
+	workSessionFile := filepath.Join(dir, "agents", "work", "sessions", "s_work.jsonl")
+	if err := os.MkdirAll(filepath.Dir(workSessionFile), 0755); err != nil {
+		t.Fatalf("mkdir work sessions dir: %v", err)
+	}
+	_ = os.WriteFile(workSessionFile, []byte(`{"type":"assistant","id":"2","message":{"role":"assistant","content":"hello"}}`+"\n"), 0644)
+	writeJSON(t, filepath.Join(dir, "agents", "work", "sessions", "sessions.json"), map[string]interface{}{
+		"work-key": map[string]interface{}{
+			"sessionId":   "session-work",
+			"chatType":    "group",
+			"updatedAt":   float64(2000),
+			"sessionFile": workSessionFile,
+		},
+	})
+
+	orphanSessionFile := filepath.Join(dir, "agents", "aaa", "sessions", "s_orphan.jsonl")
+	if err := os.MkdirAll(filepath.Dir(orphanSessionFile), 0755); err != nil {
+		t.Fatalf("mkdir orphan sessions dir: %v", err)
+	}
+	_ = os.WriteFile(orphanSessionFile, []byte(`{"type":"assistant","id":"3","message":{"role":"assistant","content":"ghost"}}`+"\n"), 0644)
+	writeJSON(t, filepath.Join(dir, "agents", "aaa", "sessions", "sessions.json"), map[string]interface{}{
+		"aaa-key": map[string]interface{}{
+			"sessionId":   "session-orphan",
+			"chatType":    "group",
+			"updatedAt":   float64(3000),
+			"sessionFile": orphanSessionFile,
+		},
+	})
+
+	r := gin.New()
+	r.GET("/sessions", GetSessions(cfg))
+	req := httptest.NewRequest(http.MethodGet, "/sessions", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		OK       bool          `json:"ok"`
+		Sessions []SessionInfo `json:"sessions"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Sessions) != 1 || resp.Sessions[0].AgentID != "work" {
+		t.Fatalf("expected fallback to explicit work agent, got %+v", resp.Sessions)
+	}
+}
+
+func TestPreviewRouteFallsBackToEffectiveDefaultAgent(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	dir := t.TempDir()
+	cfg := &config.Config{OpenClawDir: dir}
+	writeJSON(t, filepath.Join(dir, "openclaw.json"), map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "ghost",
+			"list": []interface{}{
+				map[string]interface{}{"id": "work"},
+			},
+		},
+		"bindings": []interface{}{},
+	})
+
+	r := gin.New()
+	r.POST("/route/preview", PreviewOpenClawRoute(cfg))
+	req := httptest.NewRequest(http.MethodPost, "/route/preview", bytes.NewReader([]byte(`{"meta":{"channel":"qq","peer":"group:123"}}`)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			Agent string `json:"agent"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Result.Agent != "work" {
+		t.Fatalf("expected preview fallback to effective default work, got %s", resp.Result.Agent)
 	}
 }
 

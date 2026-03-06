@@ -20,6 +20,10 @@ func loadAgentIDs(cfg *config.Config) ([]string, map[string]struct{}) {
 	}
 
 	ocConfig, _ := cfg.ReadOpenClawJSON()
+	list := parseAgentsListFromConfig(ocConfig)
+	if len(list) > 0 {
+		return collectAgentIDsFromList(list)
+	}
 	return collectAgentIDsFromConfigAndDisk(cfg, ocConfig)
 }
 
@@ -28,7 +32,24 @@ func loadDefaultAgentID(cfg *config.Config) string {
 		return "main"
 	}
 	ocConfig, _ := cfg.ReadOpenClawJSON()
-	defaultID := strings.TrimSpace(getDefaultAgentID(ocConfig, parseAgentsListFromConfig(ocConfig)))
+	list := parseAgentsListFromConfig(ocConfig)
+	defaultID := strings.TrimSpace(getDefaultAgentID(ocConfig, list))
+	if len(list) > 0 {
+		if defaultID != "" {
+			for _, item := range list {
+				if strings.TrimSpace(toString(item["id"])) == defaultID {
+					return defaultID
+				}
+			}
+		}
+		for _, item := range list {
+			if id := strings.TrimSpace(toString(item["id"])); id != "" {
+				return id
+			}
+		}
+		return "main"
+	}
+
 	agentIDs, agentSet := collectAgentIDsFromConfigAndDisk(cfg, ocConfig)
 	if defaultID != "" {
 		if _, ok := agentSet[defaultID]; ok {
@@ -42,6 +63,25 @@ func loadDefaultAgentID(cfg *config.Config) string {
 		}
 	}
 	return "main"
+}
+
+func collectAgentIDsFromList(list []map[string]interface{}) ([]string, map[string]struct{}) {
+	agentSet := map[string]struct{}{}
+	for _, item := range list {
+		if id := strings.TrimSpace(toString(item["id"])); id != "" {
+			agentSet[id] = struct{}{}
+		}
+	}
+	if len(agentSet) == 0 {
+		return nil, map[string]struct{}{}
+	}
+
+	ids := make([]string, 0, len(agentSet))
+	for id := range agentSet {
+		ids = append(ids, id)
+	}
+	sortAgentIDs(ids)
+	return ids, agentSet
 }
 
 func collectAgentIDsFromConfigAndDisk(cfg *config.Config, ocConfig map[string]interface{}) ([]string, map[string]struct{}) {
@@ -73,6 +113,11 @@ func collectAgentIDsFromConfigAndDisk(cfg *config.Config, ocConfig map[string]in
 	for id := range agentSet {
 		ids = append(ids, id)
 	}
+	sortAgentIDs(ids)
+	return ids, agentSet
+}
+
+func sortAgentIDs(ids []string) {
 	sort.Slice(ids, func(i, j int) bool {
 		if ids[i] == "main" {
 			return true
@@ -82,7 +127,6 @@ func collectAgentIDsFromConfigAndDisk(cfg *config.Config, ocConfig map[string]in
 		}
 		return ids[i] < ids[j]
 	})
-	return ids, agentSet
 }
 
 func parseAgentsListFromConfig(ocConfig map[string]interface{}) []map[string]interface{} {

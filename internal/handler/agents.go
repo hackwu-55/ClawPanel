@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/zhaoxinyi02/ClawPanel/internal/config"
@@ -42,6 +43,9 @@ func GetOpenClawAgents(cfg *config.Config) gin.HandlerFunc {
 		hasExplicitList := len(list) > 0
 		defaultConfigured := strings.TrimSpace(toString(agentsCfg["default"])) != ""
 		defaultID := getDefaultAgentID(ocConfig, list)
+		if hasExplicitList {
+			defaultID = loadDefaultAgentID(cfg)
+		}
 		if defaultID == "" {
 			defaultID = "main"
 		}
@@ -283,13 +287,31 @@ func DeleteOpenClawAgent(cfg *config.Config) gin.HandlerFunc {
 		}
 		writeAgentsList(agentsCfg, filtered, defaultID)
 
+		sessionsDir, stagedSessionsDir := "", ""
 		if !preserveSessions {
-			_ = os.RemoveAll(filepath.Join(cfg.OpenClawDir, "agents", id, "sessions"))
+			var err error
+			sessionsDir, stagedSessionsDir, err = stageAgentSessionsRemoval(cfg, id)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
+				return
+			}
 		}
 
 		if err := cfg.WriteOpenClawJSON(ocConfig); err != nil {
+			if stagedSessionsDir != "" {
+				if restoreErr := os.Rename(stagedSessionsDir, sessionsDir); restoreErr != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": fmt.Sprintf("写入配置失败，且恢复 sessions 失败: %v / %v", err, restoreErr)})
+					return
+				}
+			}
 			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
 			return
+		}
+		if stagedSessionsDir != "" {
+			if err := os.RemoveAll(stagedSessionsDir); err != nil {
+				c.JSON(http.StatusOK, gin.H{"ok": true, "warning": fmt.Sprintf("agent 已删除，但清理 sessions 失败: %v", err)})
+				return
+			}
 		}
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	}
@@ -387,8 +409,7 @@ func PreviewOpenClawRoute(cfg *config.Config) gin.HandlerFunc {
 			ocConfig = map[string]interface{}{}
 		}
 		agentsCfg := ensureAgentsConfig(ocConfig)
-		list := parseAgentsListFromConfig(ocConfig)
-		defaultID := getDefaultAgentID(ocConfig, list)
+		defaultID := loadDefaultAgentID(cfg)
 		if defaultID == "" {
 			defaultID = "main"
 		}
@@ -407,6 +428,26 @@ func PreviewOpenClawRoute(cfg *config.Config) gin.HandlerFunc {
 			},
 		})
 	}
+}
+
+func stageAgentSessionsRemoval(cfg *config.Config, agentID string) (string, string, error) {
+	sessionsDir := filepath.Join(cfg.OpenClawDir, "agents", agentID, "sessions")
+	info, err := os.Stat(sessionsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", "", nil
+		}
+		return "", "", fmt.Errorf("检查 sessions 目录失败: %w", err)
+	}
+	if !info.IsDir() {
+		return "", "", fmt.Errorf("sessions 路径不是目录: %s", sessionsDir)
+	}
+
+	stagedDir := filepath.Join(filepath.Dir(sessionsDir), fmt.Sprintf(".sessions-delete-%d", time.Now().UnixNano()))
+	if err := os.Rename(sessionsDir, stagedDir); err != nil {
+		return "", "", fmt.Errorf("暂存 sessions 目录失败: %w", err)
+	}
+	return sessionsDir, stagedDir, nil
 }
 
 var bindingMatchAllowedKeys = []string{
