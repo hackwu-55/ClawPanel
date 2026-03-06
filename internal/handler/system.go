@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -21,22 +22,7 @@ import (
 // GetVersion 获取 OpenClaw 版本信息
 func GetVersion(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Always use live 'openclaw --version' to avoid stale lastTouchedVersion
-		currentVersion := "unknown"
-		if out := runCmd("openclaw", "--version"); out != "" {
-			currentVersion = strings.TrimSpace(out)
-		}
-		// Fallback: read from openclaw.json meta
-		if currentVersion == "unknown" {
-			ocConfig, _ := cfg.ReadOpenClawJSON()
-			if ocConfig != nil {
-				if meta, ok := ocConfig["meta"].(map[string]interface{}); ok {
-					if v, ok := meta["lastTouchedVersion"].(string); ok {
-						currentVersion = v
-					}
-				}
-			}
-		}
+		currentVersion := resolveOpenClawCurrentVersion(cfg)
 
 		var updateInfo map[string]interface{}
 		updateCheckPath := filepath.Join(cfg.OpenClawDir, "update-check.json")
@@ -49,11 +35,15 @@ func GetVersion(cfg *config.Config) gin.HandlerFunc {
 		updateAvailable := false
 		if updateInfo != nil {
 			latestVersion, _ = updateInfo["lastNotifiedVersion"].(string)
+			latestVersion = normalizeVersion(latestVersion)
 			lastCheckedAt, _ = updateInfo["lastCheckedAt"].(string)
 			// Re-evaluate against live currentVersion (not the cached one)
-			if latestVersion != "" && latestVersion != currentVersion {
+			if latestVersion != "" && currentVersion != "unknown" && latestVersion != currentVersion {
 				updateAvailable = true
 			}
+		}
+		if latestVersion == "" && currentVersion != "unknown" {
+			latestVersion = currentVersion
 		}
 
 		c.JSON(http.StatusOK, gin.H{
@@ -239,42 +229,27 @@ func RestartGatewayStatus(cfg *config.Config) gin.HandlerFunc {
 // CheckUpdate 检查 OpenClaw 更新
 func CheckUpdate(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Get current installed version via 'openclaw --version' (actual binary)
-		currentVersion := "unknown"
-		if out := runCmd("openclaw", "--version"); out != "" {
-			currentVersion = strings.TrimSpace(out)
-		}
-		// Fallback: read from openclaw.json meta.lastTouchedVersion
-		if currentVersion == "unknown" {
-			ocConfig, _ := cfg.ReadOpenClawJSON()
-			if ocConfig != nil {
-				if meta, ok := ocConfig["meta"].(map[string]interface{}); ok {
-					if v, ok := meta["lastTouchedVersion"].(string); ok {
-						currentVersion = v
-					}
-				}
-			}
-		}
+		currentVersion := resolveOpenClawCurrentVersion(cfg)
 
 		latestVersion := ""
 		updateAvailable := false
 
 		// Try openclaw update --check
 		if out := runCmd("openclaw", "update", "--check"); out != "" {
-			latestVersion = strings.TrimSpace(out)
+			latestVersion = normalizeVersion(strings.TrimSpace(out))
 		}
 
 		// Fallback: try npm view
 		if latestVersion == "" {
 			if out := runCmd("npm", "view", "openclaw", "version"); out != "" {
-				latestVersion = strings.TrimSpace(out)
+				latestVersion = normalizeVersion(strings.TrimSpace(out))
 			}
 		}
 
-		if latestVersion != "" && latestVersion != currentVersion {
+		if latestVersion != "" && currentVersion != "unknown" && latestVersion != currentVersion {
 			updateAvailable = true
 		}
-		if latestVersion == "" {
+		if latestVersion == "" && currentVersion != "unknown" {
 			latestVersion = currentVersion
 		}
 
@@ -296,6 +271,47 @@ func CheckUpdate(cfg *config.Config) gin.HandlerFunc {
 			"checkedAt":       time.Now().Format(time.RFC3339),
 		})
 	}
+}
+
+func resolveOpenClawCurrentVersion(cfg *config.Config) string {
+	if v := normalizeVersion(detectOpenClawVersion(cfg)); v != "" {
+		return v
+	}
+	if out := runCmd("openclaw", "--version"); out != "" {
+		if v := normalizeVersion(out); v != "" {
+			return v
+		}
+	}
+	ocConfig, _ := cfg.ReadOpenClawJSON()
+	if ocConfig != nil {
+		if meta, ok := ocConfig["meta"].(map[string]interface{}); ok {
+			if v, ok := meta["lastTouchedVersion"].(string); ok {
+				if vv := normalizeVersion(v); vv != "" {
+					return vv
+				}
+			}
+		}
+	}
+	return "unknown"
+}
+
+func normalizeVersion(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+	v = strings.ReplaceAll(v, "\r", " ")
+	v = strings.ReplaceAll(v, "\n", " ")
+	re := regexp.MustCompile(`(?i)\bv?([0-9]+(?:\.[0-9]+){1,3}(?:[-+][0-9a-z.-]+)?)\b`)
+	if m := re.FindStringSubmatch(v); len(m) > 1 {
+		return m[1]
+	}
+	v = strings.TrimPrefix(v, "v")
+	v = strings.TrimPrefix(v, "V")
+	if regexp.MustCompile(`^[0-9]+(\.[0-9]+){1,3}([-+][0-9A-Za-z.-]+)?$`).MatchString(v) {
+		return v
+	}
+	return ""
 }
 
 // DoUpdate 执行 OpenClaw 更新

@@ -63,6 +63,16 @@ func detectCmd(name string, args ...string) string {
 	}
 	out, err := cmd.Output()
 	if err != nil {
+		if runtime.GOOS == "darwin" && name != "arch" {
+			for _, archFlag := range []string{"-arm64", "-x86_64"} {
+				altArgs := append([]string{archFlag, name}, args...)
+				alt := exec.Command("arch", altArgs...)
+				alt.Env = cmd.Env
+				if out2, err2 := alt.Output(); err2 == nil {
+					return strings.TrimSpace(string(out2))
+				}
+			}
+		}
 		return ""
 	}
 	return strings.TrimSpace(string(out))
