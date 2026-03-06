@@ -71,7 +71,7 @@ func (m *Manager) Start() error {
 	// 构建启动命令
 	m.cmd = exec.Command(openclawBin, "gateway")
 	m.cmd.Dir = m.cfg.OpenClawDir
-	m.cmd.Env = append(os.Environ(),
+	m.cmd.Env = append(buildProcessEnv(),
 		fmt.Sprintf("OPENCLAW_DIR=%s", m.cfg.OpenClawDir),
 		fmt.Sprintf("OPENCLAW_STATE_DIR=%s", m.cfg.OpenClawDir),
 		fmt.Sprintf("OPENCLAW_CONFIG_PATH=%s/openclaw.json", m.cfg.OpenClawDir),
@@ -105,6 +105,38 @@ func (m *Manager) Start() error {
 
 	log.Printf("[ProcessMgr] OpenClaw 已启动 (PID: %d)", m.status.PID)
 	return nil
+}
+
+func buildProcessEnv() []string {
+	home := os.Getenv("HOME")
+	if home == "" {
+		home, _ = os.UserHomeDir()
+	}
+	if home == "" {
+		if runtime.GOOS == "darwin" {
+			home = "/var/root"
+		} else if runtime.GOOS == "windows" {
+			home = os.Getenv("USERPROFILE")
+		} else {
+			home = "/root"
+		}
+	}
+
+	path := os.Getenv("PATH")
+	if runtime.GOOS == "windows" {
+		if path == "" {
+			path = `C:\Windows\System32;C:\Windows;C:\Windows\System32\WindowsPowerShell\v1.0\`
+		}
+	} else {
+		extra := "/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/opt/homebrew/sbin"
+		if path == "" {
+			path = extra
+		} else {
+			path = path + ":" + extra
+		}
+	}
+
+	return append(os.Environ(), "HOME="+home, "PATH="+path)
 }
 
 // Stop 停止 OpenClaw 进程
