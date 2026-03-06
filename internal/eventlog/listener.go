@@ -19,6 +19,7 @@ type Listener struct {
 	db      *sql.DB
 	hub     *websocket.Hub
 	wsURL   string
+	token   string
 	conn    *gorilla.Conn
 	mu      sync.Mutex
 	stopCh  chan struct{}
@@ -27,14 +28,18 @@ type Listener struct {
 }
 
 // NewListener creates a new event listener
-func NewListener(db *sql.DB, hub *websocket.Hub, wsURL string) *Listener {
-	return &Listener{
+func NewListener(db *sql.DB, hub *websocket.Hub, wsURL string, token ...string) *Listener {
+	l := &Listener{
 		db:     db,
 		hub:    hub,
 		wsURL:  wsURL,
 		stopCh: make(chan struct{}),
 		sysLog: NewSystemLogger(db, hub),
 	}
+	if len(token) > 0 {
+		l.token = token[0]
+	}
+	return l
 }
 
 // Start begins listening for OneBot11 events
@@ -98,7 +103,13 @@ func (l *Listener) connect() error {
 	dialer := gorilla.Dialer{
 		HandshakeTimeout: 5 * time.Second,
 	}
-	conn, _, err := dialer.Dial(l.wsURL, nil)
+	var header map[string][]string
+	if l.token != "" {
+		header = map[string][]string{
+			"Authorization": {"Bearer " + l.token},
+		}
+	}
+	conn, _, err := dialer.Dial(l.wsURL, header)
 	if err != nil {
 		return err
 	}

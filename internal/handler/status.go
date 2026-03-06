@@ -148,10 +148,10 @@ func GetStatus(db *sql.DB, cfg *config.Config, procMgr *process.Manager) gin.Han
 			"napcat":  napcatInfo,
 			"process": procStatus,
 			"admin": gin.H{
-				"uptime":   int64(time.Since(startTime).Seconds()),
-				"memoryMB": int(memStats.Sys / 1024 / 1024),
-				"os":       runtime.GOOS,
-				"arch":     runtime.GOARCH,
+				"uptime":     int64(time.Since(startTime).Seconds()),
+				"memoryMB":   int(memStats.Sys / 1024 / 1024),
+				"os":         runtime.GOOS,
+				"arch":       runtime.GOARCH,
 				"goroutines": runtime.NumGoroutine(),
 			},
 		})
@@ -213,9 +213,45 @@ func onebotApiCallSafe(method, path string, body interface{}) (map[string]interf
 // runCmd runs a command and returns trimmed stdout, or fallback on error
 func runCmd(name string, args ...string) string {
 	cmd := exec.Command(name, args...)
-	cmd.Env = append(os.Environ(), "PATH="+os.Getenv("PATH")+":/usr/local/bin:/usr/bin:/bin:/snap/bin")
+	home := os.Getenv("HOME")
+	if home == "" {
+		home, _ = os.UserHomeDir()
+	}
+	if home == "" {
+		if runtime.GOOS == "darwin" {
+			home = "/var/root"
+		} else if runtime.GOOS == "windows" {
+			home = os.Getenv("USERPROFILE")
+		} else {
+			home = "/root"
+		}
+	}
+	path := os.Getenv("PATH")
+	if runtime.GOOS == "windows" {
+		if path == "" {
+			path = `C:\Windows\System32;C:\Windows;C:\Windows\System32\WindowsPowerShell\v1.0\`
+		}
+	} else {
+		extra := []string{"/usr/local/bin", "/usr/local/sbin", "/usr/bin", "/bin", "/usr/sbin", "/sbin", "/snap/bin", "/opt/homebrew/bin", "/opt/homebrew/sbin", filepath.Join(home, ".local", "bin"), filepath.Join(home, ".npm-global", "bin")}
+		if path == "" {
+			path = strings.Join(extra, ":")
+		} else {
+			path = path + ":" + strings.Join(extra, ":")
+		}
+	}
+	cmd.Env = append(os.Environ(), "PATH="+path, "HOME="+home)
 	out, err := cmd.Output()
 	if err != nil {
+		if runtime.GOOS == "darwin" && name != "arch" {
+			for _, archFlag := range []string{"-arm64", "-x86_64"} {
+				altArgs := append([]string{archFlag, name}, args...)
+				alt := exec.Command("arch", altArgs...)
+				alt.Env = cmd.Env
+				if out2, err2 := alt.Output(); err2 == nil {
+					return strings.TrimSpace(string(out2))
+				}
+			}
+		}
 		return ""
 	}
 	return strings.TrimSpace(string(out))
@@ -313,8 +349,65 @@ func GetSystemEnv(cfg *config.Config) gin.HandlerFunc {
 			if cpuLoad != "" {
 				osInfo["loadAvg"] = cpuLoad + "%"
 			}
+		} else if runtime.GOOS == "darwin" {
+			// macOS
+			if _, ok := osInfo["distro"]; !ok {
+				productName := runCmd("sw_vers", "-productName")
+				productVer := runCmd("sw_vers", "-productVersion")
+				if productName != "" && productVer != "" {
+					osInfo["distro"] = productName + " " + productVer
+				} else if productName != "" {
+					osInfo["distro"] = productName
+				}
+			}
+			if _, ok := osInfo["release"]; !ok {
+				release := runCmd("uname", "-r")
+				if release != "" {
+					osInfo["release"] = release
+				}
+			}
+			userInfo := runCmd("whoami")
+			if userInfo != "" {
+				osInfo["userInfo"] = userInfo
+			}
+			// Memory info
+			totalMemBytes := runCmd("sysctl", "-n", "hw.memsize")
+			if totalMemBytes != "" {
+				if v, err := strconv.ParseInt(strings.TrimSpace(totalMemBytes), 10, 64); err == nil {
+					osInfo["totalMemMB"] = int(v / 1024 / 1024)
+				}
+			}
+			freeMem := runCmd("bash", "-c", `vm_stat | awk '/Pages free/ {free=$3} /Pages speculative/ {spec=$3} /Pages inactive/ {inactive=$3} END {gsub("\\.","",free); gsub("\\.","",spec); gsub("\\.","",inactive); printf "%d", ((free+spec+inactive)*4096)/1024/1024}'`)
+			if freeMem != "" {
+				if v, err := strconv.Atoi(strings.TrimSpace(freeMem)); err == nil {
+					osInfo["freeMemMB"] = v
+				}
+			}
+			// CPU model
+			cpuModel := runCmd("sysctl", "-n", "machdep.cpu.brand_string")
+			if cpuModel == "" {
+				cpuModel = runCmd("sysctl", "-n", "hw.model")
+			}
+			if cpuModel != "" {
+				osInfo["cpuModel"] = strings.TrimSpace(cpuModel)
+			}
+			// Uptime seconds
+			bootTs := runCmd("bash", "-c", `sysctl -n kern.boottime | awk -F'[ ,}]+' '{print $4}'`)
+			if bootTs != "" {
+				if bt, err := strconv.ParseInt(strings.TrimSpace(bootTs), 10, 64); err == nil {
+					uptime := time.Now().Unix() - bt
+					if uptime > 0 {
+						osInfo["uptime"] = strconv.FormatInt(uptime, 10)
+					}
+				}
+			}
+			// Load average
+			loadAvg := runCmd("bash", "-c", `sysctl -n vm.loadavg | tr -d '{}' | xargs | awk '{print $1", "$2", "$3}'`)
+			if loadAvg != "" {
+				osInfo["loadAvg"] = strings.TrimSpace(loadAvg)
+			}
 		} else {
-			// Linux/macOS: use bash and /proc/
+			// Linux
 			if _, ok := osInfo["distro"]; !ok {
 				distro := runCmd("bash", "-c", `cat /etc/os-release 2>/dev/null | grep "^PRETTY_NAME=" | cut -d= -f2 | tr -d '"'`)
 				if distro != "" {
@@ -374,7 +467,9 @@ func GetSystemEnv(cfg *config.Config) gin.HandlerFunc {
 		// Node.js
 		nodeVer := ""
 		if hostSw != nil {
-			nodeVer, _ = hostSw["node"].(string)
+			if hv, ok := hostSw["node"].(string); ok && isUsableDetectedValue(hv) {
+				nodeVer = hv
+			}
 		}
 		if nodeVer == "" {
 			nodeVer = runCmd("node", "--version")
@@ -386,7 +481,15 @@ func GetSystemEnv(cfg *config.Config) gin.HandlerFunc {
 		}
 
 		// npm
-		npmVer := runCmd("npm", "--version")
+		npmVer := ""
+		if hostSw != nil {
+			if hv, ok := hostSw["npm"].(string); ok && isUsableDetectedValue(hv) {
+				npmVer = hv
+			}
+		}
+		if npmVer == "" {
+			npmVer = runCmd("npm", "--version")
+		}
 		if npmVer != "" {
 			software["npm"] = npmVer
 		} else {
@@ -396,7 +499,9 @@ func GetSystemEnv(cfg *config.Config) gin.HandlerFunc {
 		// Docker
 		dockerVer := ""
 		if hostSw != nil {
-			dockerVer, _ = hostSw["docker"].(string)
+			if hv, ok := hostSw["docker"].(string); ok && isUsableDetectedValue(hv) {
+				dockerVer = hv
+			}
 		}
 		if dockerVer == "" {
 			dockerVer = runCmd("docker", "--version")
@@ -410,7 +515,9 @@ func GetSystemEnv(cfg *config.Config) gin.HandlerFunc {
 		// Git
 		gitVer := ""
 		if hostSw != nil {
-			gitVer, _ = hostSw["git"].(string)
+			if hv, ok := hostSw["git"].(string); ok && isUsableDetectedValue(hv) {
+				gitVer = hv
+			}
 		}
 		if gitVer == "" {
 			gitVer = runCmd("git", "--version")
@@ -424,7 +531,9 @@ func GetSystemEnv(cfg *config.Config) gin.HandlerFunc {
 		// Python
 		pythonVer := ""
 		if hostSw != nil {
-			pythonVer, _ = hostSw["python"].(string)
+			if hv, ok := hostSw["python"].(string); ok && isUsableDetectedValue(hv) {
+				pythonVer = hv
+			}
 		}
 		if pythonVer == "" {
 			pythonVer = runCmd("python3", "--version")
@@ -442,8 +551,8 @@ func GetSystemEnv(cfg *config.Config) gin.HandlerFunc {
 		software["openclaw"] = detectOpenClaw(cfg)
 
 		c.JSON(http.StatusOK, gin.H{
-			"ok": true,
-			"os": osInfo,
+			"ok":       true,
+			"os":       osInfo,
 			"software": software,
 		})
 	}
@@ -462,4 +571,12 @@ func detectOpenClaw(cfg *config.Config) string {
 		return "v" + ver
 	}
 	return ver
+}
+
+func isUsableDetectedValue(v string) bool {
+	vv := strings.TrimSpace(strings.ToLower(v))
+	if vv == "" || vv == "unknown" || vv == "not installed" || vv == "not found" || vv == "n/a" || vv == "-" {
+		return false
+	}
+	return true
 }

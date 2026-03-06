@@ -49,6 +49,18 @@ func Auth(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
+// ValidateToken 验证 JWT token 字符串是否有效（供 WebSocket 等非中间件场景使用）
+func ValidateToken(tokenStr, secret string) bool {
+	if tokenStr == "" {
+		return false
+	}
+	claims := &Claims{}
+	token, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (interface{}, error) {
+		return []byte(secret), nil
+	})
+	return err == nil && token.Valid
+}
+
 // GenerateToken 生成 JWT Token
 func GenerateToken(secret string) (string, error) {
 	claims := &Claims{

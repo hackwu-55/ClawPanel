@@ -88,8 +88,18 @@ func (h *Hub) Broadcast(msg []byte) {
 }
 
 // HandleWebSocket 处理 WebSocket 连接的 Gin handler
-func (h *Hub) HandleWebSocket() gin.HandlerFunc {
+// tokenValidator: 可选，用于验证 ?token= query param，传 nil 则不验证（已在外层 auth 中间件保护时使用）
+func (h *Hub) HandleWebSocket(tokenValidator ...func(token string) bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// 如果提供了 validator，验证 token query param
+		if len(tokenValidator) > 0 && tokenValidator[0] != nil {
+			token := c.Query("token")
+			if token == "" || !tokenValidator[0](token) {
+				c.AbortWithStatus(http.StatusUnauthorized)
+				return
+			}
+		}
+
 		conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
 			log.Printf("[WebSocket] 升级失败: %v", err)

@@ -9,7 +9,7 @@
 Go 单二进制 · React 18 · TailwindCSS · SQLite · WebSocket 实时推送 · 跨平台
 
 [![License](https://img.shields.io/badge/license-CC%20BY--NC--SA%204.0-red?style=flat-square)](LICENSE)
-[![Version](https://img.shields.io/badge/version-5.1.0-violet?style=flat-square)](https://github.com/zhaoxinyi02/ClawPanel/releases)
+[![Version](https://img.shields.io/badge/version-5.1.2-violet?style=flat-square)](https://github.com/zhaoxinyi02/ClawPanel/releases)
 [![Go](https://img.shields.io/badge/go-1.22+-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev)
 [![React](https://img.shields.io/badge/react-18-61DAFB?style=flat-square&logo=react&logoColor=white)](https://react.dev)
 [![CI](https://github.com/zhaoxinyi02/ClawPanel/actions/workflows/ci.yml/badge.svg)](https://github.com/zhaoxinyi02/ClawPanel/actions/workflows/ci.yml)
@@ -265,7 +265,7 @@ make installer    # 构建 Windows exe 安装包
     - `frontend-dist`
     - `clawpanel-linux-amd64-ci`（用于快速验收）
 - `Release Build`（`.github/workflows/release.yml`）
-  - 触发：`push tag v*`（如 `v5.1.0`）/ 手动触发
+  - 触发：`push tag v*`（如 `v5.1.2`）/ 手动触发
   - 执行：自动构建 `linux/darwin/windows` 多平台二进制 + `ClawPanel-Setup-v{version}.exe`
   - 发布：tag 触发时自动上传到 GitHub Release，并生成 `checksums.txt`
 
@@ -274,8 +274,8 @@ make installer    # 构建 Windows exe 安装包
 示例：
 
 ```bash
-git tag v5.1.0
-git push origin v5.1.0
+git tag v5.1.2
+git push origin v5.1.2
 ```
 
 ## 环境变量
@@ -324,6 +324,10 @@ sc query ClawPanel
 ## 更新日志
 
 完整更新日志请查看 [changelogs/](changelogs/) 目录。
+
+### v5.0.24 — 修复 QQ 唤醒配置不生效（Issue #21）
+- **🐛 修复 QQ 唤醒配置不生效**：修复 `wakeProbability`、`wakeTrigger` 等配置仅在面板展示但未落到插件实际生效路径的问题
+- **✨ 兼容旧配置字段**：后端保存 QQ 通道配置时自动迁移旧字段（`wakeProbability`/`wakeTrigger`/`minSendIntervalMs`/`autoApprove*`）到新版结构，避免升级后失效
 
 ### v5.0.14 — 脚本修复 · Windows 兼容性
 - **🐛 install.ps1 兼容 PowerShell 5.1**：移除三元运算符，Windows 自带 PS 5.1 可直接运行

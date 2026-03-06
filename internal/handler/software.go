@@ -22,7 +22,7 @@ type SoftwareInfo struct {
 	Description string `json:"description"`
 	Version     string `json:"version"`
 	Installed   bool   `json:"installed"`
-	Status      string `json:"status"` // installed, not_installed, running, stopped
+	Status      string `json:"status"`   // installed, not_installed, running, stopped
 	Category    string `json:"category"` // runtime, container, service
 	Installable bool   `json:"installable"`
 	Icon        string `json:"icon,omitempty"`
@@ -63,6 +63,16 @@ func detectCmd(name string, args ...string) string {
 	}
 	out, err := cmd.Output()
 	if err != nil {
+		if runtime.GOOS == "darwin" && name != "arch" {
+			for _, archFlag := range []string{"-arm64", "-x86_64"} {
+				altArgs := append([]string{archFlag, name}, args...)
+				alt := exec.Command("arch", altArgs...)
+				alt.Env = cmd.Env
+				if out2, err2 := alt.Output(); err2 == nil {
+					return strings.TrimSpace(string(out2))
+				}
+			}
+		}
 		return ""
 	}
 	return strings.TrimSpace(string(out))
@@ -195,7 +205,7 @@ func detectOpenClawVersion(cfg *config.Config) string {
 			return v
 		}
 	}
-	
+
 	// 2. Try npm global package.json (may fail when running as SYSTEM service)
 	npmRoot := detectCmd("npm", "root", "-g")
 	if npmRoot != "" {
@@ -402,7 +412,12 @@ func DetectOpenClawInstances(cfg *config.Config) gin.HandlerFunc {
 					instances = append(instances, OpenClawInstance{
 						ID: "docker-" + name, Type: "docker", Label: "Docker: " + name,
 						Version: image, Path: name, Active: running,
-						Status: func() string { if running { return "running" }; return "stopped" }(),
+						Status: func() string {
+							if running {
+								return "running"
+							}
+							return "stopped"
+						}(),
 					})
 				}
 			}
@@ -492,26 +507,45 @@ set -e
 export PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 echo "📦 安装 Node.js (v22 LTS)..."
 
-# --- Helper: install Node.js v22 from official binary tarball ---
+# --- Helper: install Node.js v22 from official binary archive (Linux/macOS) ---
 install_node_tarball() {
   local NODE_VER="v22.14.0"
+  local OS_NAME
+  local PKG_EXT
   local ARCH
+  OS_NAME=$(uname | tr '[:upper:]' '[:lower:]')
+
   case "$(uname -m)" in
     x86_64|amd64) ARCH="x64" ;;
     aarch64|arm64) ARCH="arm64" ;;
     armv7l) ARCH="armv7l" ;;
     *) echo "❌ 不支持的 CPU 架构: $(uname -m)"; exit 1 ;;
   esac
-  local URL="https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-linux-${ARCH}.tar.xz"
-  local MIRROR_URL="https://npmmirror.com/mirrors/node/${NODE_VER}/node-${NODE_VER}-linux-${ARCH}.tar.xz"
-  echo "📥 下载 Node.js ${NODE_VER} (${ARCH}) 官方二进制..."
+
+  if [ "$OS_NAME" = "darwin" ]; then
+    if [ "$ARCH" = "armv7l" ]; then
+      echo "❌ macOS 不支持 armv7l 架构"; exit 1
+    fi
+    PKG_EXT="tar.gz"
+  else
+    PKG_EXT="tar.xz"
+  fi
+
+  local FILE="node-${NODE_VER}-${OS_NAME}-${ARCH}.${PKG_EXT}"
+  local URL="https://nodejs.org/dist/${NODE_VER}/${FILE}"
+  local MIRROR_URL="https://npmmirror.com/mirrors/node/${NODE_VER}/${FILE}"
+  echo "📥 下载 Node.js ${NODE_VER} (${OS_NAME}-${ARCH}) 官方二进制..."
   local TMP_DIR=$(mktemp -d)
-  curl -fsSL "$MIRROR_URL" -o "$TMP_DIR/node.tar.xz" 2>/dev/null || \
-  curl -fsSL "$URL" -o "$TMP_DIR/node.tar.xz" || {
+  curl -fsSL "$MIRROR_URL" -o "$TMP_DIR/node.tar" 2>/dev/null || \
+  curl -fsSL "$URL" -o "$TMP_DIR/node.tar" || {
     echo "❌ Node.js 下载失败"; rm -rf "$TMP_DIR"; exit 1
   }
   echo "📦 解压到 /usr/local ..."
-  tar -xJf "$TMP_DIR/node.tar.xz" -C /usr/local --strip-components=1
+  if [ "$PKG_EXT" = "tar.gz" ]; then
+    tar -xzf "$TMP_DIR/node.tar" -C /usr/local --strip-components=1
+  else
+    tar -xJf "$TMP_DIR/node.tar" -C /usr/local --strip-components=1
+  fi
   rm -rf "$TMP_DIR"
   hash -r
 }
@@ -530,11 +564,7 @@ else
   fi
 
   if [ "$(uname)" = "Darwin" ]; then
-    if ! command -v brew &>/dev/null; then
-      echo "❌ macOS 需要先安装 Homebrew: https://brew.sh"; exit 1
-    fi
-    brew install node@22 || brew upgrade node@22 || true
-    brew link --overwrite node@22 || true
+    install_node_tarball
   else
     # Try NodeSource first
     DISTRO_FAMILY=""
@@ -604,6 +634,7 @@ if ($wingetCheck) {
 				script = `
 set -e
 export PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+export HOME="${HOME:-/var/root}"
 echo "📦 安装 Docker..."
 if command -v docker &>/dev/null; then
   echo "⚠️ Docker 已安装: $(docker --version)"
@@ -613,8 +644,21 @@ if [ "$(uname)" = "Darwin" ]; then
   echo "⚠️ macOS 请手动安装 Docker Desktop: https://www.docker.com/products/docker-desktop"
   echo "或使用 Homebrew: brew install --cask docker"
   if command -v brew &>/dev/null; then
-    brew install --cask docker
-    echo "✅ Docker Desktop 已安装，请从应用程序中启动"
+    if [ "$(id -u)" -eq 0 ]; then
+      CONSOLE_USER=$(stat -f%Su /dev/console 2>/dev/null || true)
+      if [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ] && id "$CONSOLE_USER" &>/dev/null; then
+        USER_HOME=$(dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory 2>/dev/null | awk '{print $2}')
+        [ -z "$USER_HOME" ] && USER_HOME="/Users/$CONSOLE_USER"
+        echo "📥 检测到 root 环境，切换到用户 $CONSOLE_USER 执行 brew..."
+        sudo -u "$CONSOLE_USER" HOME="$USER_HOME" PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" brew install --cask docker
+      else
+        echo "❌ 未检测到可用登录用户，无法自动执行 brew 安装"
+        exit 1
+      fi
+    else
+      brew install --cask docker
+    fi
+    echo "✅ Docker Desktop 已安装，请从应用程序中启动 Docker"
   else
     exit 1
   fi
@@ -900,29 +944,48 @@ set -e
 echo "📦 安装 OpenClaw..."
 export PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 
-# --- Helper: install Node.js v22 from official binary tarball (works on ANY Linux) ---
+# --- Helper: install Node.js v22 from official binary archive (Linux/macOS) ---
 install_node_tarball() {
   local NODE_VER="v22.14.0"
+  local OS_NAME
+  local PKG_EXT
   local ARCH
+  OS_NAME=$(uname | tr '[:upper:]' '[:lower:]')
+
   case "$(uname -m)" in
     x86_64|amd64) ARCH="x64" ;;
     aarch64|arm64) ARCH="arm64" ;;
     armv7l) ARCH="armv7l" ;;
     *) echo "❌ 不支持的 CPU 架构: $(uname -m)"; exit 1 ;;
   esac
-  local URL="https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-linux-${ARCH}.tar.xz"
-  local MIRROR_URL="https://npmmirror.com/mirrors/node/${NODE_VER}/node-${NODE_VER}-linux-${ARCH}.tar.xz"
-  echo "📥 下载 Node.js ${NODE_VER} (${ARCH}) 官方二进制..."
+
+  if [ "$OS_NAME" = "darwin" ]; then
+    if [ "$ARCH" = "armv7l" ]; then
+      echo "❌ macOS 不支持 armv7l 架构"; exit 1
+    fi
+    PKG_EXT="tar.gz"
+  else
+    PKG_EXT="tar.xz"
+  fi
+
+  local FILE="node-${NODE_VER}-${OS_NAME}-${ARCH}.${PKG_EXT}"
+  local URL="https://nodejs.org/dist/${NODE_VER}/${FILE}"
+  local MIRROR_URL="https://npmmirror.com/mirrors/node/${NODE_VER}/${FILE}"
+  echo "📥 下载 Node.js ${NODE_VER} (${OS_NAME}-${ARCH}) 官方二进制..."
   local TMP_DIR=$(mktemp -d)
   # Try China mirror first, then official
-  curl -fsSL "$MIRROR_URL" -o "$TMP_DIR/node.tar.xz" 2>/dev/null || \
-  curl -fsSL "$URL" -o "$TMP_DIR/node.tar.xz" || {
+  curl -fsSL "$MIRROR_URL" -o "$TMP_DIR/node.tar" 2>/dev/null || \
+  curl -fsSL "$URL" -o "$TMP_DIR/node.tar" || {
     echo "❌ Node.js 下载失败"
     rm -rf "$TMP_DIR"
     exit 1
   }
   echo "📦 解压到 /usr/local ..."
-  tar -xJf "$TMP_DIR/node.tar.xz" -C /usr/local --strip-components=1
+  if [ "$PKG_EXT" = "tar.gz" ]; then
+    tar -xzf "$TMP_DIR/node.tar" -C /usr/local --strip-components=1
+  else
+    tar -xJf "$TMP_DIR/node.tar" -C /usr/local --strip-components=1
+  fi
   rm -rf "$TMP_DIR"
   hash -r
   echo "✅ Node.js $(node --version) 安装完成 (官方二进制)"
@@ -947,12 +1010,7 @@ if ! node_version_ok; then
   fi
 
   if [ "$(uname)" = "Darwin" ]; then
-    if ! command -v brew &>/dev/null; then
-      echo "❌ macOS 需要先安装 Homebrew: https://brew.sh"
-      exit 1
-    fi
-    brew install node@22 || brew upgrade node@22 || true
-    brew link --overwrite node@22 || true
+    install_node_tarball
   else
     # Try NodeSource first, then fallback to binary tarball
     DISTRO_FAMILY=""
@@ -1015,7 +1073,23 @@ echo "📝 初始化配置..."
 openclaw init 2>/dev/null || true
 
 # 5. Install QQ plugin (OneBot11 channel) if not present
-OPENCLAW_DIR="${OPENCLAW_DIR:-$HOME/.openclaw}"
+# Robust OpenClaw dir resolution for sudo/service environments:
+# - avoid empty HOME -> /.openclaw
+# - auto-fix legacy relative path (.openclaw)
+OPENCLAW_DIR="${OPENCLAW_DIR:-}"
+if [ -z "$OPENCLAW_DIR" ] || [ "$OPENCLAW_DIR" = "/" ] || [ "$OPENCLAW_DIR" = ".openclaw" ]; then
+  if [ -n "${SUDO_USER:-}" ] && command -v dscl &>/dev/null; then
+    UHOME=$(dscl . -read "/Users/${SUDO_USER}" NFSHomeDirectory 2>/dev/null | awk '{print $2}')
+  fi
+  if [ -z "${UHOME:-}" ]; then
+    UHOME="${HOME:-/var/root}"
+  fi
+  OPENCLAW_DIR="${UHOME}/.openclaw"
+fi
+case "$OPENCLAW_DIR" in
+  /*) ;;
+  *) OPENCLAW_DIR="${HOME:-/var/root}/$OPENCLAW_DIR" ;;
+esac
 QQ_EXT_DIR="$OPENCLAW_DIR/extensions/qq"
 if [ ! -d "$QQ_EXT_DIR" ]; then
   echo "📥 安装 QQ (OneBot11) 通道插件..."
@@ -1198,15 +1272,28 @@ fi
 
 if ! docker info &>/dev/null; then
   echo "⚠️ Docker 服务未运行，正在启动..."
-  systemctl start docker
-  sleep 2
+  if [ "$(uname)" = "Darwin" ]; then
+    open -a Docker 2>/dev/null || true
+    for i in $(seq 1 30); do
+      if docker info &>/dev/null; then
+        break
+      fi
+      sleep 2
+    done
+  else
+    systemctl start docker
+    sleep 2
+  fi
 fi
 
-# Configure Docker mirror (always ensure, even if Docker was pre-installed)
-if [ ! -f /etc/docker/daemon.json ] || ! grep -q "registry-mirrors" /etc/docker/daemon.json 2>/dev/null; then
-  echo "🔧 配置 Docker 镜像加速器..."
-  mkdir -p /etc/docker
-  cat > /etc/docker/daemon.json << 'DOCKEREOF'
+# Configure Docker mirror (Linux only)
+if [ "$(uname)" = "Darwin" ]; then
+  echo "ℹ️ macOS 跳过 /etc/docker/daemon.json 镜像配置"
+else
+  if [ ! -f /etc/docker/daemon.json ] || ! grep -q "registry-mirrors" /etc/docker/daemon.json 2>/dev/null; then
+    echo "🔧 配置 Docker 镜像加速器..."
+    mkdir -p /etc/docker
+    cat > /etc/docker/daemon.json << 'DOCKEREOF'
 {
   "registry-mirrors": [
     "https://docker.1ms.run",
@@ -1214,9 +1301,15 @@ if [ ! -f /etc/docker/daemon.json ] || ! grep -q "registry-mirrors" /etc/docker/
   ]
 }
 DOCKEREOF
-  systemctl daemon-reload
-  systemctl restart docker
-  sleep 2
+    systemctl daemon-reload
+    systemctl restart docker
+    sleep 2
+  fi
+fi
+
+if ! docker info &>/dev/null; then
+  echo "❌ Docker 服务仍未就绪，请手动启动 Docker Desktop 后重试"
+  exit 1
 fi
 
 # Check if already exists
@@ -1229,7 +1322,17 @@ fi
 echo "📥 拉取 NapCat 镜像..."
 docker pull mlikiowa/napcat-docker:latest
 
-echo "🔧 创建容器..."
+# Detect existing logged-in account for quick re-login
+ACCOUNT_ARG=""
+if docker inspect openclaw-qq &>/dev/null; then
+  PREV_ACCOUNT=$(docker inspect openclaw-qq --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | grep '^ACCOUNT=' | cut -d= -f2)
+  if [ -n "$PREV_ACCOUNT" ]; then
+    ACCOUNT_ARG="-e ACCOUNT=$PREV_ACCOUNT"
+    echo "� 使用快速登录账号: $PREV_ACCOUNT"
+  fi
+fi
+
+echo "� 创建容器..."
 docker run -d \
   --name openclaw-qq \
   --restart unless-stopped \
@@ -1239,6 +1342,7 @@ docker run -d \
   -e NAPCAT_GID=0 \
   -e NAPCAT_UID=0 \
   -e WEBUI_TOKEN=clawpanel-qq \
+  $ACCOUNT_ARG \
   -v napcat-qq-session:/app/.config/QQ \
   -v napcat-config:/app/napcat/config \
   -v %s:/root/.openclaw:rw \
@@ -1250,39 +1354,47 @@ sleep 5
 
 # Configure OneBot11 WebSocket + HTTP
 echo "🔧 配置 OneBot11 (WS + HTTP)..."
-docker exec openclaw-qq bash -c 'cat > /app/napcat/config/onebot11.json << OBEOF
+# Read accessToken from openclaw.json for WS token sync
+OPENCLAW_DIR="${HOME}/.openclaw"
+if [ -f "${OPENCLAW_DIR}/openclaw.json" ]; then
+  WS_TOKEN=$(python3 -c "import json,sys; d=json.load(open('${OPENCLAW_DIR}/openclaw.json')); print(d.get('channels',{}).get('qq',{}).get('accessToken',''))" 2>/dev/null || echo "")
+else
+  WS_TOKEN=""
+fi
+
+docker exec openclaw-qq bash -c "cat > /app/napcat/config/onebot11.json << OBEOF
 {
-  "network": {
-    "websocketServers": [{
-      "name": "ws-server",
-      "enable": true,
-      "host": "0.0.0.0",
-      "port": 3001,
-      "token": "",
-      "reportSelfMessage": true,
-      "enableForcePushEvent": true,
-      "messagePostFormat": "array",
-      "debug": false,
-      "heartInterval": 30000
+  \"network\": {
+    \"websocketServers\": [{
+      \"name\": \"ws-server\",
+      \"enable\": true,
+      \"host\": \"0.0.0.0\",
+      \"port\": 3001,
+      \"token\": \"${WS_TOKEN}\",
+      \"reportSelfMessage\": true,
+      \"enableForcePushEvent\": true,
+      \"messagePostFormat\": \"array\",
+      \"debug\": false,
+      \"heartInterval\": 30000
     }],
-    "httpServers": [{
-      "name": "http-api",
-      "enable": true,
-      "host": "0.0.0.0",
-      "port": 3000,
-      "token": ""
+    \"httpServers\": [{
+      \"name\": \"http-api\",
+      \"enable\": true,
+      \"host\": \"0.0.0.0\",
+      \"port\": 3000,
+      \"token\": \"\"
     }],
-    "httpSseServers": [],
-    "httpClients": [],
-    "websocketClients": [],
-    "plugins": []
+    \"httpSseServers\": [],
+    \"httpClients\": [],
+    \"websocketClients\": [],
+    \"plugins\": []
   },
-  "musicSignUrl": "",
-  "enableLocalFile2Url": true,
-  "parseMultMsg": true,
-  "imageDownloadProxy": ""
+  \"musicSignUrl\": \"\",
+  \"enableLocalFile2Url\": true,
+  \"parseMultMsg\": true,
+  \"imageDownloadProxy\": \"\"
 }
-OBEOF'
+OBEOF"
 
 # Configure WebUI
 docker exec openclaw-qq bash -c 'cat > /app/napcat/config/webui.json << WUEOF

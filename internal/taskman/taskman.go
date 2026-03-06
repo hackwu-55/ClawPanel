@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -153,10 +155,45 @@ func (m *Manager) RunCommand(task *Task, name string, args ...string) error {
 	m.broadcastTaskUpdate(task)
 
 	cmd := exec.Command(name, args...)
-	cmd.Env = append(cmd.Environ(),
+	env := cmd.Environ()
+
+	if runtime.GOOS == "windows" {
+		if os.Getenv("USERPROFILE") == "" {
+			if home, err := os.UserHomeDir(); err == nil && home != "" {
+				env = append(env, "USERPROFILE="+home)
+			}
+		}
+	} else {
+		home := os.Getenv("HOME")
+		if home == "" {
+			home, _ = os.UserHomeDir()
+		}
+		if home == "" {
+			if runtime.GOOS == "darwin" {
+				home = "/var/root"
+			} else {
+				home = "/root"
+			}
+		}
+		if os.Getenv("HOME") == "" && home != "" {
+			env = append(env, "HOME="+home)
+		}
+	}
+
+	if os.Getenv("PATH") == "" {
+		if runtime.GOOS == "windows" {
+			env = append(env, "PATH=C:\\Windows\\System32;C:\\Windows;C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\")
+		} else {
+			env = append(env, "PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin")
+		}
+	}
+
+	env = append(env,
 		"DEBIAN_FRONTEND=noninteractive",
 		"LANG=en_US.UTF-8",
 	)
+
+	cmd.Env = dedupeEnv(env)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -180,6 +217,28 @@ func (m *Manager) RunCommand(task *Task, name string, args ...string) error {
 		return err
 	}
 	return nil
+}
+
+func dedupeEnv(env []string) []string {
+	seen := make(map[string]int)
+	out := make([]string, 0, len(env))
+
+	for _, kv := range env {
+		eq := strings.IndexByte(kv, '=')
+		if eq <= 0 {
+			out = append(out, kv)
+			continue
+		}
+		key := kv[:eq]
+		if idx, ok := seen[key]; ok {
+			out[idx] = kv
+			continue
+		}
+		seen[key] = len(out)
+		out = append(out, kv)
+	}
+
+	return out
 }
 
 // RunScript 运行脚本并实时推送输出（Windows 用 PowerShell，其他平台用 bash）

@@ -168,10 +168,9 @@ func (s *Server) Start() {
 
 	if runtime.GOOS != "windows" {
 		// Use systemd-run --scope to escape the parent's cgroup.
-		// When systemctl stop clawpanel runs, systemd kills all processes in
-		// clawpanel.service's cgroup. By launching via systemd-run --scope,
-		// the updater child lives in its own transient scope and survives.
-		cmd := exec.Command("systemd-run", "--scope", "--unit=clawpanel-updater",
+		// Use a timestamp-based unit name to avoid collision on rapid restarts.
+		unitName := fmt.Sprintf("clawpanel-updater-%d", time.Now().Unix())
+		cmd := exec.Command("systemd-run", "--scope", "--unit="+unitName,
 			"/bin/bash", "-c",
 			fmt.Sprintf("%s --updater-standalone %s %s %d %s >%s 2>&1",
 				bin, s.currentVersion, s.dataDir, s.panelPort, s.openClawDir, logFile),
@@ -183,7 +182,19 @@ func (s *Server) Start() {
 			s.startDirectChild(bin, logFile)
 			return
 		}
-		cmd.Process.Release()
+		// Wait briefly then check if systemd-run itself failed (e.g. unit name conflict)
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+		select {
+		case err := <-done:
+			// systemd-run exited immediately — inner command failed to launch
+			log.Printf("[Updater] systemd-run 立即退出 (err=%v), 尝试直接启动...", err)
+			s.startDirectChild(bin, logFile)
+			return
+		case <-time.After(800 * time.Millisecond):
+			// Still running after 800ms — assume it successfully launched the child
+			cmd.Process.Release()
+		}
 	} else {
 		s.startDirectChild(bin, logFile)
 		return
@@ -228,8 +239,8 @@ func (s *Server) killStandaloneUpdater() {
 	if runtime.GOOS == "windows" {
 		return
 	}
-	// Find and kill processes with --updater-standalone
-	out, _ := exec.Command("pgrep", "-f", "--updater-standalone").Output()
+	// Use grep via shell to avoid --updater-standalone being parsed as pgrep flag
+	out, _ := exec.Command("sh", "-c", "pgrep -f 'updater-standalone'").Output()
 	pids := strings.Fields(strings.TrimSpace(string(out)))
 	myPid := fmt.Sprintf("%d", os.Getpid())
 	for _, pid := range pids {

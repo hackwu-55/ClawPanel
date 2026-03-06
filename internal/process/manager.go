@@ -71,7 +71,7 @@ func (m *Manager) Start() error {
 	// 构建启动命令
 	m.cmd = exec.Command(openclawBin, "gateway")
 	m.cmd.Dir = m.cfg.OpenClawDir
-	m.cmd.Env = append(os.Environ(),
+	m.cmd.Env = append(buildProcessEnv(),
 		fmt.Sprintf("OPENCLAW_DIR=%s", m.cfg.OpenClawDir),
 		fmt.Sprintf("OPENCLAW_STATE_DIR=%s", m.cfg.OpenClawDir),
 		fmt.Sprintf("OPENCLAW_CONFIG_PATH=%s/openclaw.json", m.cfg.OpenClawDir),
@@ -105,6 +105,38 @@ func (m *Manager) Start() error {
 
 	log.Printf("[ProcessMgr] OpenClaw 已启动 (PID: %d)", m.status.PID)
 	return nil
+}
+
+func buildProcessEnv() []string {
+	home := os.Getenv("HOME")
+	if home == "" {
+		home, _ = os.UserHomeDir()
+	}
+	if home == "" {
+		if runtime.GOOS == "darwin" {
+			home = "/var/root"
+		} else if runtime.GOOS == "windows" {
+			home = os.Getenv("USERPROFILE")
+		} else {
+			home = "/root"
+		}
+	}
+
+	path := os.Getenv("PATH")
+	if runtime.GOOS == "windows" {
+		if path == "" {
+			path = `C:\Windows\System32;C:\Windows;C:\Windows\System32\WindowsPowerShell\v1.0\`
+		}
+	} else {
+		extra := "/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/opt/homebrew/sbin"
+		if path == "" {
+			path = extra
+		} else {
+			path = path + ":" + extra
+		}
+	}
+
+	return append(os.Environ(), "HOME="+home, "PATH="+path)
 }
 
 // Stop 停止 OpenClaw 进程
@@ -396,6 +428,7 @@ func (m *Manager) ensureOpenClawConfig() {
 	qqInstalled := false
 	if _, err := os.Stat(qqExtDir); err == nil {
 		qqInstalled = true
+		m.normalizeQQPluginOwnership(qqExtDir)
 	}
 	napcatRunning := m.isNapCatRunning()
 
@@ -454,6 +487,30 @@ func (m *Manager) ensureOpenClawConfig() {
 		log.Println("[ProcessMgr] QQ 插件已安装但 NapCat 未运行，跳过 channels.qq 配置注入")
 	}
 
+	// Fix invalid channel config values that cause OpenClaw gateway to refuse to start.
+	// e.g. whatsapp.dmPolicy must be one of "pairing"|"allowlist"|"open"|"disabled"
+	ch, _ := cfg["channels"].(map[string]interface{})
+	if ch != nil {
+		if wa, ok := ch["whatsapp"].(map[string]interface{}); ok {
+			validDmPolicy := map[string]bool{"pairing": true, "allowlist": true, "open": true, "disabled": true}
+			if dp, _ := wa["dmPolicy"].(string); dp != "" && !validDmPolicy[dp] {
+				log.Printf("[ProcessMgr] 修复无效 channels.whatsapp.dmPolicy 值 %q → \"disabled\"", dp)
+				wa["dmPolicy"] = "disabled"
+				ch["whatsapp"] = wa
+				cfg["channels"] = ch
+				changed = true
+			}
+			validGroupPolicy := map[string]bool{"pairing": true, "allowlist": true, "open": true, "disabled": true}
+			if gp, _ := wa["groupPolicy"].(string); gp != "" && !validGroupPolicy[gp] {
+				log.Printf("[ProcessMgr] 修复无效 channels.whatsapp.groupPolicy 值 %q → \"disabled\"", gp)
+				wa["groupPolicy"] = "disabled"
+				ch["whatsapp"] = wa
+				cfg["channels"] = ch
+				changed = true
+			}
+		}
+	}
+
 	if changed {
 		out, err := json.MarshalIndent(cfg, "", "  ")
 		if err != nil {
@@ -461,12 +518,28 @@ func (m *Manager) ensureOpenClawConfig() {
 		} else if err := os.WriteFile(cfgPath, out, 0644); err != nil {
 			log.Printf("[ProcessMgr] openclaw.json 写入失败: %v", err)
 		} else {
-			log.Println("[ProcessMgr] openclaw.json 配置已自动修复 (gateway.mode/channels.qq/plugins)")
+			log.Println("[ProcessMgr] openclaw.json 配置已自动修复 (gateway.mode/channels.qq/plugins/whatsapp)")
 		}
 	}
 
 	// Patch QQ plugin channel.ts: startAccount must return a long-lived Promise
 	m.patchQQPluginChannelTS(ocDir)
+}
+
+// normalizeQQPluginOwnership ensures QQ extension ownership matches the running
+// service user (root in launchd/systemd deployments). Otherwise OpenClaw may
+// block the plugin as suspicious ownership and refuse to load channel "qq".
+func (m *Manager) normalizeQQPluginOwnership(qqExtDir string) {
+	if runtime.GOOS == "windows" {
+		return
+	}
+	if os.Geteuid() != 0 {
+		return
+	}
+	cmd := exec.Command("chown", "-R", "0:0", qqExtDir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		log.Printf("[ProcessMgr] 修复 QQ 插件目录属主失败: %v (%s)", err, strings.TrimSpace(string(out)))
+	}
 }
 
 // patchQQPluginChannelTS fixes the critical bug where the QQ plugin's startAccount
@@ -591,7 +664,29 @@ func (m *Manager) isNapCatRunning() bool {
 		out2, err2 := exec.Command("tasklist", "/FI", "IMAGENAME eq napcat.exe", "/NH").Output()
 		return err2 == nil && strings.Contains(string(out2), "napcat.exe")
 	}
-	// Linux: check Docker container state
-	out, err := exec.Command("docker", "inspect", "--format", "{{.State.Running}}", "openclaw-qq").Output()
+	// Linux/macOS: check Docker container state with robust env/path handling
+	out, err := runDockerOutput("inspect", "--format", "{{.State.Running}}", "openclaw-qq")
 	return err == nil && strings.TrimSpace(string(out)) == "true"
+}
+
+func runDockerOutput(args ...string) ([]byte, error) {
+	bins := []string{"docker", "/usr/local/bin/docker", "/opt/homebrew/bin/docker"}
+	for _, bin := range bins {
+		cmd := exec.Command(bin, args...)
+		cmd.Env = buildProcessEnv()
+		if out, err := cmd.Output(); err == nil {
+			return out, nil
+		}
+		if runtime.GOOS == "darwin" {
+			for _, archFlag := range []string{"-arm64", "-x86_64"} {
+				altArgs := append([]string{archFlag, bin}, args...)
+				alt := exec.Command("arch", altArgs...)
+				alt.Env = buildProcessEnv()
+				if out, err := alt.Output(); err == nil {
+					return out, nil
+				}
+			}
+		}
+	}
+	return nil, fmt.Errorf("docker command unavailable")
 }

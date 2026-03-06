@@ -238,6 +238,33 @@ func checkNapCatConfig(cfg *config.Config) ([]ConfigIssue, int) {
 				})
 			}
 
+			// Check host is not 127.0.0.1 (NapCat bug: binding 127.0.0.1 causes "Server Started undefined:undefined")
+			checked++
+			wsHost, _ := wsMap["host"].(string)
+			if wsHost == "127.0.0.1" {
+				issues = append(issues, ConfigIssue{
+					ID: fmt.Sprintf("napcat-ws-%d-host-loopback", i), Severity: "error", Component: "napcat",
+					Title: "NapCat WebSocket 绑定地址错误",
+					Description: "host 为 127.0.0.1 导致 NapCat WebSocket 服务启动失败（显示 undefined:undefined），必须改为 0.0.0.0",
+					Fixable: true, CurrentVal: "127.0.0.1", ExpectedVal: "0.0.0.0", FilePath: filePath,
+				})
+			}
+
+			// Check token matches openclaw.json channels.qq.accessToken
+			checked++
+			expectedToken := getNapCatExpectedWSToken(cfg)
+			if expectedToken != "" {
+				actualToken, _ := wsMap["token"].(string)
+				if actualToken != expectedToken {
+					issues = append(issues, ConfigIssue{
+						ID: fmt.Sprintf("napcat-ws-%d-token-mismatch", i), Severity: "error", Component: "napcat",
+						Title: "NapCat WebSocket token 与 openclaw.json 不一致",
+						Description: fmt.Sprintf("openclaw.json 中 channels.qq.accessToken=%q，但 NapCat onebot11.json WS token=%q，两者不一致导致 OpenClaw 无法连接 NapCat", expectedToken, actualToken),
+						Fixable: true, CurrentVal: actualToken, ExpectedVal: expectedToken, FilePath: filePath,
+					})
+				}
+			}
+
 			// Check reportSelfMessage
 			checked++
 			reportSelf, reportSelfExists := wsMap["reportSelfMessage"].(bool)
@@ -527,6 +554,12 @@ func fixIssue(issueID string, cfg *config.Config) error {
 	case strings.HasPrefix(issueID, "napcat-http-") && strings.HasSuffix(issueID, "-disabled"):
 		return fixNapCatHTTPField(cfg, "enable", true)
 
+	case strings.HasPrefix(issueID, "napcat-ws-") && strings.HasSuffix(issueID, "-host-loopback"):
+		return fixNapCatAllAccountsWSHost(cfg)
+
+	case strings.HasPrefix(issueID, "napcat-ws-") && strings.HasSuffix(issueID, "-token-mismatch"):
+		return fixNapCatWSToken(cfg)
+
 	case issueID == "napcat-webui-no-token":
 		return fixNapCatWebUIToken(cfg)
 
@@ -538,15 +571,44 @@ func fixIssue(issueID string, cfg *config.Config) error {
 	}
 }
 
+// getNapCatExpectedWSToken returns the accessToken that openclaw.json expects NapCat WS to use.
+// If openclaw.json has channels.qq.accessToken set, NapCat WS must use the same token.
+func getNapCatExpectedWSToken(cfg *config.Config) string {
+	ocDir := cfg.OpenClawDir
+	if ocDir == "" {
+		home, _ := os.UserHomeDir()
+		ocDir = filepath.Join(home, ".openclaw")
+	}
+	data, err := os.ReadFile(filepath.Join(ocDir, "openclaw.json"))
+	if err != nil {
+		return ""
+	}
+	var ocCfg map[string]interface{}
+	if json.Unmarshal(data, &ocCfg) != nil {
+		return ""
+	}
+	ch, _ := ocCfg["channels"].(map[string]interface{})
+	if ch == nil {
+		return ""
+	}
+	qq, _ := ch["qq"].(map[string]interface{})
+	if qq == nil {
+		return ""
+	}
+	token, _ := qq["accessToken"].(string)
+	return token
+}
+
 func writeDefaultOneBot11Config(cfg *config.Config) error {
-	defaultConfig := `{
+	wsToken := getNapCatExpectedWSToken(cfg)
+	defaultConfig := fmt.Sprintf(`{
   "network": {
     "websocketServers": [{
       "name": "ws-server",
       "enable": true,
       "host": "0.0.0.0",
       "port": 3001,
-      "token": "",
+      "token": "%s",
       "reportSelfMessage": true,
       "enableForcePushEvent": true,
       "messagePostFormat": "array",
@@ -569,7 +631,7 @@ func writeDefaultOneBot11Config(cfg *config.Config) error {
   "enableLocalFile2Url": true,
   "parseMultMsg": true,
   "imageDownloadProxy": ""
-}`
+}`, wsToken)
 	if runtime.GOOS == "windows" {
 		p, err := napCatConfigPath(cfg, "onebot11.json")
 		if err != nil {
@@ -581,6 +643,68 @@ func writeDefaultOneBot11Config(cfg *config.Config) error {
 	cmd := exec.Command("docker", "exec", "openclaw-qq", "bash", "-c",
 		fmt.Sprintf("cat > /app/napcat/config/onebot11.json << 'FIXEOF'\n%s\nFIXEOF", defaultConfig))
 	return cmd.Run()
+}
+
+func fixNapCatWSToken(cfg *config.Config) error {
+	expected := getNapCatExpectedWSToken(cfg)
+	return fixNapCatWSField(cfg, "token", expected)
+}
+
+// fixNapCatAllAccountsWSHost fixes host=127.0.0.1 → 0.0.0.0 in onebot11.json and all onebot11_*.json account files.
+// NapCat has a bug where binding 127.0.0.1 causes "Server Started undefined:undefined" and WS never starts.
+func fixNapCatAllAccountsWSHost(cfg *config.Config) error {
+	// Fix the base onebot11.json first
+	if err := fixNapCatWSField(cfg, "host", "0.0.0.0"); err != nil {
+		return err
+	}
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	// Fix all per-account onebot11_*.json files inside the container
+	out, err := exec.Command("docker", "exec", "openclaw-qq", "sh", "-c",
+		"ls /app/napcat/config/onebot11_*.json 2>/dev/null").Output()
+	if err != nil || len(out) == 0 {
+		return nil
+	}
+	for _, fpath := range strings.Fields(string(out)) {
+		raw, err := exec.Command("docker", "exec", "openclaw-qq", "cat", fpath).Output()
+		if err != nil {
+			continue
+		}
+		var data map[string]interface{}
+		if json.Unmarshal(raw, &data) != nil {
+			continue
+		}
+		network, _ := data["network"].(map[string]interface{})
+		if network == nil {
+			continue
+		}
+		wsServers, _ := network["websocketServers"].([]interface{})
+		changed := false
+		for _, ws := range wsServers {
+			wsMap, _ := ws.(map[string]interface{})
+			if wsMap != nil {
+				if h, _ := wsMap["host"].(string); h == "127.0.0.1" {
+					wsMap["host"] = "0.0.0.0"
+					changed = true
+				}
+			}
+		}
+		if !changed {
+			continue
+		}
+		jsonBytes, err := json.MarshalIndent(data, "", "  ")
+		if err != nil {
+			continue
+		}
+		tmpFile := fmt.Sprintf("/tmp/ob11_fix_%d.json", len(fpath))
+		if os.WriteFile(tmpFile, jsonBytes, 0644) != nil {
+			continue
+		}
+		exec.Command("docker", "cp", tmpFile, "openclaw-qq:"+fpath).Run()
+		os.Remove(tmpFile)
+	}
+	return nil
 }
 
 func fixNapCatWSField(cfg *config.Config, field string, value interface{}) error {

@@ -88,6 +88,16 @@ func Load() (*Config, error) {
 		}
 	}
 
+	// 路径校验：
+	// 1) 如果配置中的路径是另一个 OS 的路径格式，则重新探测
+	// 2) 如果是相对路径（历史版本遗留），统一升级为绝对路径
+	// 例如：Windows 上读到了 /root/.openclaw（Linux 路径），或 Linux 上读到了 C:\... （Windows 路径）
+	if isStaleOSPath(cfg.OpenClawDir) || !filepath.IsAbs(cfg.OpenClawDir) {
+		cfg.OpenClawDir = getDefaultOpenClawDir()
+		cfg.OpenClawWork = ""
+		cfg.OpenClawApp = ""
+	}
+
 	// 设置默认工作目录（基于 OpenClawDir 的父目录）
 	parentDir := filepath.Dir(cfg.OpenClawDir) // e.g. /home/user/openclaw or C:\Users\xxx\.openclaw -> C:\Users\xxx
 	if cfg.OpenClawWork == "" || !dirExists(cfg.OpenClawWork) {
@@ -114,6 +124,14 @@ func Load() (*Config, error) {
 		if cfg.OpenClawApp == "" {
 			cfg.OpenClawApp = filepath.Join(parentDir, "app")
 		}
+	}
+
+	// 历史兼容：将相对路径升级为绝对路径，避免在服务环境下被解析到错误目录
+	if cfg.OpenClawWork != "" && !filepath.IsAbs(cfg.OpenClawWork) {
+		cfg.OpenClawWork = filepath.Join(parentDir, cfg.OpenClawWork)
+	}
+	if cfg.OpenClawApp != "" && !filepath.IsAbs(cfg.OpenClawApp) {
+		cfg.OpenClawApp = filepath.Join(parentDir, cfg.OpenClawApp)
 	}
 
 	// 保存配置（确保文件存在）
@@ -166,6 +184,21 @@ func getDataDir() string {
 // getDefaultOpenClawDir 获取默认 OpenClaw 配置目录
 func getDefaultOpenClawDir() string {
 	home, _ := os.UserHomeDir()
+	if home == "" {
+		home = os.Getenv("HOME")
+	}
+	if home == "" {
+		if runtime.GOOS == "darwin" {
+			home = "/var/root"
+		} else if runtime.GOOS == "windows" {
+			home = os.Getenv("USERPROFILE")
+			if home == "" {
+				home = `C:\Users\Administrator`
+			}
+		} else {
+			home = "/root"
+		}
+	}
 
 	// Build candidate list: check multiple possible locations
 	candidates := []string{
@@ -381,6 +414,23 @@ func cleanupOldPreEditBackups(backupDir string, keep int) error {
 	return nil
 }
 
+// isStaleOSPath 检测配置文件里的路径是否来自另一个 OS（跨平台路径污染）
+// 例如 Windows 上读到 /root/.openclaw（Unix 绝对路径），或 Linux 上读到 C:\Users\...
+func isStaleOSPath(p string) bool {
+	if p == "" {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		// Unix 绝对路径 /xxx 在 Windows 上无效
+		return strings.HasPrefix(p, "/")
+	}
+	// Unix 上：Windows 驱动器路径 C:\ 或 C:/ 无效
+	if len(p) >= 3 && p[1] == ':' && (p[2] == '\\' || p[2] == '/') {
+		return true
+	}
+	return false
+}
+
 // dirExists 检查目录是否存在
 func dirExists(path string) bool {
 	info, err := os.Stat(path)
@@ -462,9 +512,26 @@ func (c *Config) OpenClawInstalled() bool {
 	if c.OpenClawConfigExists() {
 		return true
 	}
+	// 1.5 OpenClaw 应用目录存在（package.json）
+	if c.OpenClawApp != "" {
+		if _, err := os.Stat(filepath.Join(c.OpenClawApp, "package.json")); err == nil {
+			return true
+		}
+	}
 	// 2. 二进制在 PATH 中可用
 	if p, err := exec.LookPath("openclaw"); err == nil && p != "" {
 		return true
+	}
+	// 2.5 常见绝对路径兜底（服务环境 PATH 可能不完整）
+	commonBins := []string{
+		"/usr/local/bin/openclaw",
+		"/usr/bin/openclaw",
+		"/opt/homebrew/bin/openclaw",
+	}
+	for _, bin := range commonBins {
+		if _, err := os.Stat(bin); err == nil {
+			return true
+		}
 	}
 	// 3. Windows: 检查 npm 全局目录（包括普通用户和 SYSTEM 账户）
 	if runtime.GOOS == "windows" {

@@ -117,22 +117,27 @@ func runServer(stopCh chan struct{}) {
 	sysLog := eventlog.NewSystemLogger(db, wsHub)
 	sysLog.Log("system", "panel.start", "ClawPanel 管理面板已启动")
 
-	// 检查 QQ 通道是否启用
+	// 检查 QQ 通道是否启用，读取 accessToken 用于 WS 认证
 	qqEnabled := false
+	qqAccessToken := ""
 	if ocCfg, _ := cfg.ReadOpenClawJSON(); ocCfg != nil {
 		if channels, ok := ocCfg["channels"].(map[string]interface{}); ok {
 			if qqCh, ok := channels["qq"].(map[string]interface{}); ok {
 				if enabled, ok := qqCh["enabled"].(bool); ok && enabled {
 					qqEnabled = true
 				}
+				if token, ok := qqCh["accessToken"].(string); ok {
+					qqAccessToken = token
+				}
 			}
 		}
 	}
 
 	// 启动 OneBot11 事件监听器 (仅当 QQ 通道启用时)
+	// 传入 accessToken 用于 NapCat WS 认证（NapCat onebot11.json ws token 须与此一致）
 	var evListener *eventlog.Listener
 	if qqEnabled {
-		evListener = eventlog.NewListener(db, wsHub, "ws://127.0.0.1:3001")
+		evListener = eventlog.NewListener(db, wsHub, "ws://127.0.0.1:3001", qqAccessToken)
 		evListener.Start()
 		defer evListener.Stop()
 	}
@@ -365,8 +370,10 @@ func runServer(stopCh chan struct{}) {
 		api.POST("/events/log", handler.PostEvent(db))
 	}
 
-	// WebSocket 路由（前端连接 /ws?token=...）
-	r.GET("/ws", wsHub.HandleWebSocket())
+	// WebSocket 路由（前端连接 /ws?token=...，需通过 JWT 验证）
+	r.GET("/ws", wsHub.HandleWebSocket(func(token string) bool {
+		return middleware.ValidateToken(token, cfg.JWTSecret)
+	}))
 
 	// 内嵌前端静态资源
 	frontendDist, err := fs.Sub(frontendFS, "frontend/dist")

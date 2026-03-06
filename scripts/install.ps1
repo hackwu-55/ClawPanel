@@ -19,11 +19,15 @@ Write-Host "  [ClawPanel] 获取最新版本信息..." -ForegroundColor Cyan
 try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $releaseInfo = Invoke-RestMethod -Uri "https://api.github.com/repos/$REPO/releases/latest" -UseBasicParsing
-    $VERSION = $releaseInfo.tag_name -replace '^v', ''
+    $tag = [string]$releaseInfo.tag_name
+    $VERSION = $tag -replace '^v', ''
+    if ([string]::IsNullOrWhiteSpace($VERSION) -or ($VERSION -notmatch '^[0-9][0-9A-Za-z._-]*$')) {
+        throw "invalid tag_name: $tag"
+    }
     Write-Host "  [ClawPanel] 最新版本: v$VERSION" -ForegroundColor Green
 } catch {
     Write-Host "  [ClawPanel] 无法获取最新版本，使用默认版本..." -ForegroundColor Yellow
-    $VERSION = "5.0.14"
+    $VERSION = "5.0.25"
 }
 
 $BINARY_NAME = "clawpanel-v${VERSION}-windows-amd64.exe"
