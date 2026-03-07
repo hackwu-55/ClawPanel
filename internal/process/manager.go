@@ -37,6 +37,7 @@ type Manager struct {
 	cfg                *config.Config
 	cmd                *exec.Cmd
 	daemonized         bool
+	bindHostCheck      func(host string) bool
 	gatewayProbe       func(host, port string) bool
 	lastGatewayProbeAt time.Time
 	lastGatewayProbeOK bool
@@ -50,6 +51,11 @@ type Manager struct {
 }
 
 const gatewayProbeCacheTTL = 3 * time.Second
+
+var (
+	tailnetIPv4Net = mustCIDR("100.64.0.0/10")
+	tailnetIPv6Net = mustCIDR("fd7a:115c:a1e0::/48")
+)
 
 // NewManager 创建进程管理器
 func NewManager(cfg *config.Config) *Manager {
@@ -422,21 +428,7 @@ func (m *Manager) waitForExit() {
 
 // getGatewayPort reads the gateway port from openclaw.json config
 func (m *Manager) getGatewayPort() string {
-	ocDir := m.cfg.OpenClawDir
-	if ocDir == "" {
-		home, _ := os.UserHomeDir()
-		ocDir = filepath.Join(home, ".openclaw")
-	}
-	cfgPath := filepath.Join(ocDir, "openclaw.json")
-	data, err := os.ReadFile(cfgPath)
-	if err != nil {
-		return "18789" // default gateway port
-	}
-	var cfg map[string]interface{}
-	if json.Unmarshal(data, &cfg) != nil {
-		return "18789"
-	}
-	if gw, ok := cfg["gateway"].(map[string]interface{}); ok {
+	if gw := m.readGatewayConfig(); gw != nil {
 		if port, ok := gw["port"].(float64); ok && port > 0 {
 			return fmt.Sprintf("%d", int(port))
 		}
@@ -444,29 +436,174 @@ func (m *Manager) getGatewayPort() string {
 	return "18789"
 }
 
+func (m *Manager) readGatewayConfig() map[string]interface{} {
+	ocDir := m.cfg.OpenClawDir
+	if ocDir == "" {
+		home, _ := os.UserHomeDir()
+		ocDir = filepath.Join(home, ".openclaw")
+	}
+	if strings.TrimSpace(ocDir) == "" {
+		return nil
+	}
+	cfgPath := filepath.Join(ocDir, "openclaw.json")
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return nil
+	}
+	var cfg map[string]interface{}
+	if json.Unmarshal(data, &cfg) != nil {
+		return nil
+	}
+	if gw, ok := cfg["gateway"].(map[string]interface{}); ok && gw != nil {
+		return gw
+	}
+	return nil
+}
+
+func defaultGatewayLoopbackTargets() []string {
+	return []string{"127.0.0.1", "localhost", "::1"}
+}
+
 func (m *Manager) getGatewayProbeTargets() (string, []string) {
 	port := m.getGatewayPort()
-	targets := []string{"127.0.0.1", "localhost", "::1"}
+	bind, custom := m.getGatewayBindSettings()
+	return port, gatewayConfiguredTargets(bind, custom, collectGatewayCandidateTargets(), m.canBindGatewayHost)
+}
 
-	ifaces, err := net.Interfaces()
-	if err == nil {
-		for _, iface := range ifaces {
-			addrs, err := iface.Addrs()
-			if err != nil {
-				continue
+func (m *Manager) getGatewayPortCheckTargets() []string {
+	bind, custom := m.getGatewayBindSettings()
+	return gatewayConfiguredTargets(bind, custom, collectGatewayCandidateTargets(), m.canBindGatewayHost)
+}
+
+func (m *Manager) getGatewayBindSettings() (string, string) {
+	gw := m.readGatewayConfig()
+	if gw == nil {
+		return "", ""
+	}
+	bind, _ := gw["bind"].(string)
+	custom, _ := gw["customBindHost"].(string)
+	if strings.TrimSpace(custom) == "" {
+		if legacy, ok := gw["bindAddress"].(string); ok {
+			custom = legacy
+		}
+	}
+	return strings.ToLower(strings.TrimSpace(bind)), custom
+}
+
+func gatewayPortCheckTargets(bind, custom string, allTargets []string) []string {
+	return gatewayConfiguredTargets(bind, custom, allTargets, func(string) bool { return true })
+}
+
+func gatewayConfiguredTargets(bind, custom string, allTargets []string, canBindHost func(host string) bool) []string {
+	loopbacks := defaultGatewayLoopbackTargets()
+	switch strings.ToLower(strings.TrimSpace(bind)) {
+	case "", "auto", "loopback":
+		if canBindAnyLoopback(canBindHost) {
+			return loopbacks
+		}
+		return allTargets
+	case "tailnet":
+		if targets := tailnetGatewayTargets(allTargets); len(targets) > 0 {
+			return targets
+		}
+		if canBindAnyLoopback(canBindHost) {
+			return loopbacks
+		}
+		return allTargets
+	case "lan":
+		return allTargets
+	case "custom":
+		custom = normalizeGatewayProbeHost(custom)
+		if custom == "localhost" {
+			if canBindAnyLoopback(canBindHost) {
+				return loopbacks
 			}
-			for _, addr := range addrs {
-				switch v := addr.(type) {
-				case *net.IPNet:
-					targets = appendGatewayProbeTarget(targets, v.IP.String())
-				case *net.IPAddr:
-					targets = appendGatewayProbeTarget(targets, v.IP.String())
-				}
+			return allTargets
+		}
+		if ip := net.ParseIP(custom); ip != nil && ip.IsLoopback() {
+			if canBindHost(custom) {
+				return []string{custom}
+			}
+			return allTargets
+		}
+		if custom != "" {
+			if canBindHost(custom) {
+				return []string{custom}
+			}
+			return allTargets
+		}
+		return allTargets
+	}
+	return loopbacks
+}
+
+func collectGatewayCandidateTargets() []string {
+	targets := defaultGatewayLoopbackTargets()
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return targets
+	}
+	for _, iface := range ifaces {
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			switch v := addr.(type) {
+			case *net.IPNet:
+				targets = appendGatewayProbeTarget(targets, v.IP.String())
+			case *net.IPAddr:
+				targets = appendGatewayProbeTarget(targets, v.IP.String())
 			}
 		}
 	}
+	return targets
+}
 
-	return port, targets
+func tailnetGatewayTargets(allTargets []string) []string {
+	targets := make([]string, 0, len(allTargets))
+	for _, host := range allTargets {
+		ip := net.ParseIP(host)
+		if ip == nil {
+			continue
+		}
+		if tailnetIPv4Net.Contains(ip) || tailnetIPv6Net.Contains(ip) {
+			targets = appendGatewayProbeTarget(targets, host)
+		}
+	}
+	return targets
+}
+
+func mustCIDR(cidr string) *net.IPNet {
+	_, network, err := net.ParseCIDR(cidr)
+	if err != nil {
+		panic(err)
+	}
+	return network
+}
+
+func canBindAnyLoopback(canBindHost func(host string) bool) bool {
+	if canBindHost == nil {
+		return true
+	}
+	for _, host := range defaultGatewayLoopbackTargets() {
+		if canBindHost(host) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Manager) canBindGatewayHost(host string) bool {
+	if m.bindHostCheck != nil {
+		return m.bindHostCheck(host)
+	}
+	ln, err := net.Listen("tcp", net.JoinHostPort(host, "0"))
+	if err != nil {
+		return false
+	}
+	_ = ln.Close()
+	return true
 }
 
 func appendGatewayProbeTarget(targets []string, host string) []string {
@@ -547,7 +684,7 @@ func (m *Manager) waitForGatewayReady(timeout time.Duration) bool {
 
 // isPortListening checks if a TCP port is currently listening
 func (m *Manager) isPortListening(port string) bool {
-	_, hosts := m.getGatewayProbeTargets()
+	hosts := m.getGatewayPortCheckTargets()
 	for _, host := range hosts {
 		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 300*time.Millisecond)
 		if err != nil {

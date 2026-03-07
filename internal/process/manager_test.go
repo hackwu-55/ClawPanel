@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -112,6 +113,113 @@ func TestStartRejectsOccupiedNonOpenClawPort(t *testing.T) {
 	err := mgr.Start()
 	if err == nil || !strings.Contains(err.Error(), "已被其他本地服务占用") {
 		t.Fatalf("expected Start to reject occupied non-OpenClaw port, got %v", err)
+	}
+}
+
+func TestGatewayPortCheckTargetsLoopbackBindUsesLoopbackOnly(t *testing.T) {
+	allTargets := []string{"127.0.0.1", "localhost", "::1", "10.0.0.2", "fd00:1234:ffff::10"}
+	got := gatewayPortCheckTargets("loopback", "", allTargets)
+	want := []string{"127.0.0.1", "localhost", "::1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected loopback-only targets, got %#v", got)
+	}
+}
+
+func TestGatewayPortCheckTargetsCustomHostUsesCustomTarget(t *testing.T) {
+	allTargets := []string{"127.0.0.1", "localhost", "::1", "10.0.0.2", "fd00:1234:ffff::10"}
+	got := gatewayPortCheckTargets("custom", "10.0.0.2", allTargets)
+	want := []string{"10.0.0.2"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected custom bind host only, got %#v", got)
+	}
+}
+
+func TestGatewayPortCheckTargetsCustomLoopbackUsesExactHost(t *testing.T) {
+	allTargets := []string{"127.0.0.1", "localhost", "::1", "10.0.0.2", "fd00:1234:ffff::10"}
+	got := gatewayPortCheckTargets("custom", "127.0.0.1", allTargets)
+	want := []string{"127.0.0.1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected exact custom loopback host, got %#v", got)
+	}
+}
+
+func TestGatewayPortCheckTargetsDefaultUsesLoopbackOnly(t *testing.T) {
+	allTargets := []string{"127.0.0.1", "localhost", "::1", "10.0.0.2", "fd00:1234:ffff::10"}
+	got := gatewayPortCheckTargets("", "", allTargets)
+	want := []string{"127.0.0.1", "localhost", "::1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected default bind to use loopback targets, got %#v", got)
+	}
+}
+
+func TestGatewayPortCheckTargetsLanIgnoresStaleCustomHost(t *testing.T) {
+	allTargets := []string{"127.0.0.1", "localhost", "::1", "10.0.0.2", "fd00:1234:ffff::10"}
+	got := gatewayPortCheckTargets("lan", "127.0.0.1", allTargets)
+	if !reflect.DeepEqual(got, allTargets) {
+		t.Fatalf("expected lan bind to ignore stale custom host, got %#v", got)
+	}
+}
+
+func TestGatewayPortCheckTargetsTailnetUsesTailnetAddresses(t *testing.T) {
+	allTargets := []string{"127.0.0.1", "localhost", "::1", "10.0.0.2", "100.100.100.1", "fd7a:115c:a1e0::1"}
+	got := gatewayPortCheckTargets("tailnet", "", allTargets)
+	want := []string{"100.100.100.1", "fd7a:115c:a1e0::1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected tailnet-only targets, got %#v", got)
+	}
+}
+
+func TestGatewayConfiguredTargetsAutoFallsBackToAllTargetsWhenLoopbackUnavailable(t *testing.T) {
+	allTargets := []string{"127.0.0.1", "localhost", "::1", "10.0.0.2"}
+	got := gatewayConfiguredTargets("auto", "", allTargets, func(string) bool { return false })
+	if !reflect.DeepEqual(got, allTargets) {
+		t.Fatalf("expected auto bind to fall back to all targets when loopback is unavailable, got %#v", got)
+	}
+}
+
+func TestGatewayConfiguredTargetsTailnetFallsBackLikeUpstream(t *testing.T) {
+	allTargets := []string{"127.0.0.1", "localhost", "::1", "10.0.0.2"}
+	got := gatewayConfiguredTargets("tailnet", "", allTargets, func(host string) bool { return host == "127.0.0.1" })
+	want := []string{"127.0.0.1", "localhost", "::1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected tailnet bind without tailnet IP to fall back to loopback when it is available, got %#v", got)
+	}
+	got = gatewayConfiguredTargets("tailnet", "", allTargets, func(string) bool { return false })
+	if !reflect.DeepEqual(got, allTargets) {
+		t.Fatalf("expected tailnet bind without tailnet or loopback availability to fall back to all targets, got %#v", got)
+	}
+}
+
+func TestGatewayConfiguredTargetsTreatsIPv6LoopbackAsAvailable(t *testing.T) {
+	allTargets := []string{"127.0.0.1", "localhost", "::1", "10.0.0.2"}
+	got := gatewayConfiguredTargets("loopback", "", allTargets, func(host string) bool { return host == "::1" })
+	want := []string{"127.0.0.1", "localhost", "::1"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected IPv6 loopback availability to keep loopback targets, got %#v", got)
+	}
+}
+
+func TestGatewayConfiguredTargetsCustomLoopbackRequiresThatHost(t *testing.T) {
+	allTargets := []string{"127.0.0.1", "localhost", "::1", "10.0.0.2"}
+	got := gatewayConfiguredTargets("custom", "127.0.0.1", allTargets, func(host string) bool { return host == "::1" })
+	if !reflect.DeepEqual(got, allTargets) {
+		t.Fatalf("expected custom loopback host to fall back when only a different loopback is bindable, got %#v", got)
+	}
+}
+
+func TestGetGatewayPortCheckTargetsUsesRuntimeFallbackWhenLoopbackUnavailable(t *testing.T) {
+	openclawDir := newOpenClawDir(t)
+	cfgPath := filepath.Join(openclawDir, "openclaw.json")
+	if err := os.WriteFile(cfgPath, []byte(`{"gateway":{"bind":"loopback"}}`), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	mgr := NewManager(&config.Config{OpenClawDir: openclawDir})
+	mgr.bindHostCheck = func(string) bool { return false }
+	got := mgr.getGatewayPortCheckTargets()
+	want := collectGatewayCandidateTargets()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected port-check targets to follow runtime fallback when loopback is unavailable, got %#v", got)
 	}
 }
 
