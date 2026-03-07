@@ -261,6 +261,30 @@ func writeAgentCoreOpenClawJSON(t *testing.T, cfg *config.Config, payload map[st
 	writeJSON(t, filepath.Join(cfg.OpenClawDir, "openclaw.json"), payload)
 }
 
+func expectAgentCoreIOStatus(t *testing.T, w *httptest.ResponseRecorder, expected int) bool {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		if w.Code != http.StatusNotImplemented {
+			t.Fatalf("expected 501 on windows, got %d: %s", w.Code, w.Body.String())
+		}
+		var resp struct {
+			OK    bool   `json:"ok"`
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode windows unsupported response: %v", err)
+		}
+		if resp.Error != errAgentCoreFileUnsupportedPlatform.Error() {
+			t.Fatalf("expected unsupported-platform message, got %+v", resp)
+		}
+		return false
+	}
+	if w.Code != expected {
+		t.Fatalf("expected %d, got %d: %s", expected, w.Code, w.Body.String())
+	}
+	return true
+}
+
 func TestGetOpenClawAgentCoreFilesReadsWorkspaceDocs(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
@@ -288,8 +312,8 @@ func TestGetOpenClawAgentCoreFilesReadsWorkspaceDocs(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	if !expectAgentCoreIOStatus(t, w, http.StatusOK) {
+		return
 	}
 
 	var resp struct {
@@ -363,8 +387,8 @@ func TestGetOpenClawAgentCoreFilesTruncatesOversizedContent(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	if !expectAgentCoreIOStatus(t, w, http.StatusOK) {
+		return
 	}
 
 	var resp struct {
@@ -418,8 +442,8 @@ func TestSaveOpenClawAgentCoreFileCreatesWorkspaceDoc(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	if !expectAgentCoreIOStatus(t, w, http.StatusOK) {
+		return
 	}
 
 	saved, err := os.ReadFile(filepath.Join(workspace, "MEMORY.md"))
@@ -460,8 +484,8 @@ func TestSaveOpenClawAgentCoreFileReplacesExistingDoc(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	if !expectAgentCoreIOStatus(t, w, http.StatusOK) {
+		return
 	}
 	saved, err := os.ReadFile(filepath.Join(workspace, "MEMORY.md"))
 	if err != nil {
@@ -503,8 +527,8 @@ func TestGetOpenClawAgentCoreFilesDoesNotFollowSymlink(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	if !expectAgentCoreIOStatus(t, w, http.StatusOK) {
+		return
 	}
 
 	var resp struct {
@@ -562,8 +586,8 @@ func TestSaveOpenClawAgentCoreFileRejectsSymlink(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	if !expectAgentCoreIOStatus(t, w, http.StatusForbidden) {
+		return
 	}
 	saved, err := os.ReadFile(sensitiveFile)
 	if err != nil {

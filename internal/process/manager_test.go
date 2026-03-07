@@ -145,8 +145,14 @@ func listenTCP(t *testing.T) (net.Listener, int) {
 func listeningProbe(port int) func(string, string) bool {
 	expectedPort := strconv.Itoa(port)
 	return func(host, actualPort string) bool {
-		if host != "127.0.0.1" || actualPort != expectedPort {
+		if actualPort != expectedPort {
 			return false
+		}
+		if host != "localhost" {
+			ip := net.ParseIP(host)
+			if ip == nil || !ip.IsLoopback() {
+				return false
+			}
 		}
 		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, actualPort), 200*time.Millisecond)
 		if err != nil {
