@@ -47,7 +47,7 @@ const FAKE_AGENTS = {
       },
       groupChat: { enabled: true },
       sandbox: { mode: 'all', workspaceAccess: 'rw' },
-      identity: { name: 'Main Assistant', description: '负责默认路由与综合问题处理', tone: '专业、稳定' },
+      identity: { name: 'Main Assistant', theme: 'general assistant', emoji: '🤖', avatar: 'avatars/main.png' },
     },
     {
       id: 'work',
@@ -64,7 +64,7 @@ const FAKE_AGENTS = {
       },
       groupChat: { enabled: false },
       sandbox: { mode: 'all', workspaceAccess: 'ro' },
-      identity: { name: 'Work Specialist', description: '处理工作流与执行类请求', tone: '直接、聚焦结果' },
+      identity: { name: 'Work Specialist', theme: 'workflow specialist', emoji: '🛠️', avatar: 'avatars/work.png' },
     },
   ],
   bindings: [

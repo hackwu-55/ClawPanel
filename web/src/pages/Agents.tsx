@@ -41,8 +41,9 @@ interface AgentFormState {
   compactionMode: '' | 'default' | 'safeguard';
   compactionMaxHistoryShare: string;
   identityName: string;
-  identityDescription: string;
-  identityTone: string;
+  identityTheme: string;
+  identityEmoji: string;
+  identityAvatar: string;
   sandboxMode: '' | 'off' | 'non-main' | 'all';
   sandboxScope: '' | 'session' | 'agent' | 'shared';
   sandboxWorkspaceAccess: '' | 'none' | 'ro' | 'rw';
@@ -185,8 +186,9 @@ const DEFAULT_AGENT_FORM: AgentFormState = {
   compactionMode: '',
   compactionMaxHistoryShare: '',
   identityName: '',
-  identityDescription: '',
-  identityTone: '',
+  identityTheme: '',
+  identityEmoji: '',
+  identityAvatar: '',
   sandboxMode: '',
   sandboxScope: '',
   sandboxWorkspaceAccess: '',
@@ -903,6 +905,18 @@ function extractCompactionDraft(raw: any): { mode: '' | 'default' | 'safeguard';
   };
 }
 
+function extractIdentityDraft(raw: any): { name: string; theme: string; emoji: string; avatar: string } {
+  if (!isPlainObject(raw)) {
+    return { name: '', theme: '', emoji: '', avatar: '' };
+  }
+  return {
+    name: String(raw.name || '').trim(),
+    theme: String(raw.theme ?? raw.description ?? raw.vibe ?? raw.tone ?? '').trim(),
+    emoji: String(raw.emoji || '').trim(),
+    avatar: String(raw.avatar || '').trim(),
+  };
+}
+
 function detectSandboxStarter(raw: string): string {
   const text = raw.trim();
   if (!text) return 'inherit';
@@ -1000,7 +1014,7 @@ function isImplicitMainAgent(agent?: AgentItem): boolean {
 function createAgentFormState(agent?: AgentItem): AgentFormState {
   const modelDraft = extractModelDraft(agent?.model);
   const params = isPlainObject(agent?.params) ? agent?.params : {};
-  const identity = isPlainObject(agent?.identity) ? agent?.identity : {};
+  const identityDraft = extractIdentityDraft(agent?.identity);
   const tools = isPlainObject(agent?.tools) ? agent?.tools : {};
   const subagents = isPlainObject(agent?.subagents) ? agent?.subagents : {};
   const groupChat = isPlainObject(agent?.groupChat) ? agent?.groupChat : {};
@@ -1022,9 +1036,10 @@ function createAgentFormState(agent?: AgentItem): AgentFormState {
     contextTokens: agent?.contextTokens === undefined ? '' : String(agent.contextTokens),
     compactionMode: compactionDraft.mode,
     compactionMaxHistoryShare: compactionDraft.maxHistoryShare,
-    identityName: String(identity.name || '').trim(),
-    identityDescription: String(identity.description || '').trim(),
-    identityTone: String(identity.tone || '').trim(),
+    identityName: identityDraft.name,
+    identityTheme: identityDraft.theme,
+    identityEmoji: identityDraft.emoji,
+    identityAvatar: identityDraft.avatar,
     sandboxMode: sandboxDraft.mode,
     sandboxScope: sandboxDraft.scope,
     sandboxWorkspaceAccess: sandboxDraft.workspaceAccess,
@@ -1597,6 +1612,7 @@ export default function Agents() {
       const paramsObj = parseJSONText(form.paramsText, 'params');
       const modelDraft = extractModelDraft(modelObj);
       const sandboxDraft = extractSandboxDraft(sandboxObj);
+      const identityDraft = extractIdentityDraft(identityObj);
       setForm(prev => ({
         ...prev,
         modelPrimary: modelDraft.primary,
@@ -1604,9 +1620,10 @@ export default function Agents() {
         paramTemperature: isPlainObject(paramsObj) && paramsObj.temperature !== undefined ? String(paramsObj.temperature) : '',
         paramTopP: isPlainObject(paramsObj) && paramsObj.topP !== undefined ? String(paramsObj.topP) : '',
         paramMaxTokens: isPlainObject(paramsObj) && paramsObj.maxTokens !== undefined ? String(paramsObj.maxTokens) : '',
-        identityName: isPlainObject(identityObj) ? String(identityObj.name || '').trim() : '',
-        identityDescription: isPlainObject(identityObj) ? String(identityObj.description || '').trim() : '',
-        identityTone: isPlainObject(identityObj) ? String(identityObj.tone || '').trim() : '',
+        identityName: identityDraft.name,
+        identityTheme: identityDraft.theme,
+        identityEmoji: identityDraft.emoji,
+        identityAvatar: identityDraft.avatar,
         sandboxMode: sandboxDraft.mode,
         sandboxScope: sandboxDraft.scope,
         sandboxWorkspaceAccess: sandboxDraft.workspaceAccess,
@@ -1713,12 +1730,16 @@ export default function Agents() {
           throw new Error('identity JSON 必须是对象才能与结构化字段合并');
         }
         const nextIdentity = isPlainObject(identityObj) ? deepClone(identityObj) : {};
+        delete nextIdentity.description;
+        delete nextIdentity.tone;
         if (form.identityName.trim()) nextIdentity.name = form.identityName.trim();
         else delete nextIdentity.name;
-        if (form.identityDescription.trim()) nextIdentity.description = form.identityDescription.trim();
-        else delete nextIdentity.description;
-        if (form.identityTone.trim()) nextIdentity.tone = form.identityTone.trim();
-        else delete nextIdentity.tone;
+        if (form.identityTheme.trim()) nextIdentity.theme = form.identityTheme.trim();
+        else delete nextIdentity.theme;
+        if (form.identityEmoji.trim()) nextIdentity.emoji = form.identityEmoji.trim();
+        else delete nextIdentity.emoji;
+        if (form.identityAvatar.trim()) nextIdentity.avatar = form.identityAvatar.trim();
+        else delete nextIdentity.avatar;
         identityObj = cleanupObject(nextIdentity);
       }
 
@@ -2143,7 +2164,7 @@ export default function Agents() {
 
   const selectedModelDraft = extractModelDraft(selectedAgent?.model);
   const selectedCompactionDraft = extractCompactionDraft(selectedAgent?.compaction);
-  const selectedIdentity = isPlainObject(selectedAgent?.identity) ? selectedAgent.identity : {};
+  const selectedIdentity = extractIdentityDraft(selectedAgent?.identity);
   const selectedTools = isPlainObject(selectedAgent?.tools) ? selectedAgent.tools : {};
   const selectedSubagents = isPlainObject(selectedAgent?.subagents) ? selectedAgent.subagents : {};
   const selectedGroupChat = isPlainObject(selectedAgent?.groupChat) ? selectedAgent.groupChat : {};
@@ -2336,7 +2357,7 @@ export default function Agents() {
                         </div>
                         <p className="mt-1 text-sm text-gray-500">
                           <span className="font-mono">{selectedAgent.id}</span>
-                          {selectedIdentity.description ? ` · ${String(selectedIdentity.description).trim()}` : ''}
+                          {selectedIdentity.theme ? ` · ${selectedIdentity.theme}` : ''}
                         </p>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
@@ -2401,8 +2422,9 @@ export default function Agents() {
                               <div>回退模型（Fallbacks）：{selectedModelDraft.fallbacks || '未设置'}</div>
                               <div>上下文预算（contextTokens）：{selectedAgent?.contextTokens !== undefined ? String(selectedAgent.contextTokens) : (agentDefaults.contextTokens !== undefined ? `继承默认 (${agentDefaults.contextTokens})` : '继承默认')}</div>
                               <div>压缩模式（compaction.mode）：{selectedCompactionDraft.mode || agentDefaults.compactionMode || '继承默认'}</div>
-                              <div>身份名（Name）：{String(selectedIdentity.name || '').trim() || '未设置'}</div>
-                              <div>语气（Tone）：{String(selectedIdentity.tone || '').trim() || '未设置'}</div>
+                              <div>身份名（Name）：{selectedIdentity.name || '未设置'}</div>
+                              <div>主题（Theme）：{selectedIdentity.theme || '未设置'}</div>
+                              <div>表情（Emoji）：{selectedIdentity.emoji || '未设置'}</div>
                             </div>
                             <button onClick={() => openEdit(selectedAgent, 'behavior')} className="mt-4 px-3 py-2 text-xs rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600">
                               编辑模型与身份（Edit Model & Identity）
@@ -2506,20 +2528,24 @@ export default function Agents() {
                             <h4 className="text-sm font-semibold text-gray-900 dark:text-white">身份摘要（Identity Summary）</h4>
                             <p className="text-xs text-gray-500 mt-1">业务方通常先理解“这个 Agent 是谁、以什么口吻工作”。</p>
                           </div>
-                          <div className="space-y-3 text-sm">
-                            <div className="rounded-lg bg-gray-50 dark:bg-gray-900 px-3 py-3">
-                              <div className="text-xs text-gray-400">显示名称（Name）</div>
-                              <div className="mt-1 text-gray-900 dark:text-white">{String(selectedIdentity.name || '').trim() || '未设置'}</div>
+                            <div className="space-y-3 text-sm">
+                              <div className="rounded-lg bg-gray-50 dark:bg-gray-900 px-3 py-3">
+                                <div className="text-xs text-gray-400">显示名称（Name）</div>
+                                <div className="mt-1 text-gray-900 dark:text-white">{selectedIdentity.name || '未设置'}</div>
+                              </div>
+                              <div className="rounded-lg bg-gray-50 dark:bg-gray-900 px-3 py-3">
+                                <div className="text-xs text-gray-400">主题（Theme）</div>
+                                <div className="mt-1 text-gray-700 dark:text-gray-200 whitespace-pre-wrap">{selectedIdentity.theme || '未设置'}</div>
+                              </div>
+                              <div className="rounded-lg bg-gray-50 dark:bg-gray-900 px-3 py-3">
+                                <div className="text-xs text-gray-400">表情（Emoji）</div>
+                                <div className="mt-1 text-gray-700 dark:text-gray-200">{selectedIdentity.emoji || '未设置'}</div>
+                              </div>
+                              <div className="rounded-lg bg-gray-50 dark:bg-gray-900 px-3 py-3">
+                                <div className="text-xs text-gray-400">头像（Avatar）</div>
+                                <div className="mt-1 text-gray-700 dark:text-gray-200 break-all">{selectedIdentity.avatar || '未设置'}</div>
+                              </div>
                             </div>
-                            <div className="rounded-lg bg-gray-50 dark:bg-gray-900 px-3 py-3">
-                              <div className="text-xs text-gray-400">职责描述（Description）</div>
-                              <div className="mt-1 text-gray-700 dark:text-gray-200 whitespace-pre-wrap">{String(selectedIdentity.description || '').trim() || '未设置'}</div>
-                            </div>
-                            <div className="rounded-lg bg-gray-50 dark:bg-gray-900 px-3 py-3">
-                              <div className="text-xs text-gray-400">语气风格（Tone）</div>
-                              <div className="mt-1 text-gray-700 dark:text-gray-200">{String(selectedIdentity.tone || '').trim() || '未设置'}</div>
-                            </div>
-                          </div>
                           <button onClick={() => openEdit(selectedAgent, 'behavior')} className="px-3 py-2 text-xs rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600">
                               编辑身份摘要（Edit Identity）
                             </button>
@@ -3744,33 +3770,42 @@ export default function Agents() {
                   <div className="rounded-xl border border-gray-100 dark:border-gray-700 p-4 space-y-4">
                     <div>
                       <h4 className="text-sm font-semibold text-gray-900 dark:text-white">身份摘要（Identity）</h4>
-                      <p className="text-xs text-gray-500 mt-1">提供对非技术用户最常见的身份信息。保存时写入 <span className="font-mono">identity.name / description / tone</span>。</p>
+                      <p className="text-xs text-gray-500 mt-1">已对齐官方 <span className="font-mono">openclaw agents set-identity</span>：保存时写入 <span className="font-mono">identity.name / theme / emoji / avatar</span>。</p>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       <div>
-                          <label className="text-xs text-gray-500">身份名称（Identity Name）</label>
+                        <label className="text-xs text-gray-500">身份名称（Identity Name）</label>
                         <input
                           value={form.identityName}
                           onChange={e => updateForm({ identityName: e.target.value }, 'identity')}
-                          placeholder="例如 Support Agent"
+                          placeholder="例如 OpenClaw"
+                          className="w-full mt-1 px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-500">主题（Theme）</label>
+                        <input
+                          value={form.identityTheme}
+                          onChange={e => updateForm({ identityTheme: e.target.value }, 'identity')}
+                          placeholder="例如 space lobster"
+                          className="w-full mt-1 px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-500">表情（Emoji）</label>
+                        <input
+                          value={form.identityEmoji}
+                          onChange={e => updateForm({ identityEmoji: e.target.value }, 'identity')}
+                          placeholder="例如 🦞"
                           className="w-full mt-1 px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900"
                         />
                       </div>
                       <div className="md:col-span-2">
-                          <label className="text-xs text-gray-500">职责描述（Description）</label>
+                        <label className="text-xs text-gray-500">头像（Avatar）</label>
                         <input
-                          value={form.identityDescription}
-                          onChange={e => updateForm({ identityDescription: e.target.value }, 'identity')}
-                          placeholder="一句话说明职责与边界"
-                          className="w-full mt-1 px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900"
-                        />
-                      </div>
-                      <div className="md:col-span-3">
-                          <label className="text-xs text-gray-500">语气风格（Tone / Style）</label>
-                        <input
-                          value={form.identityTone}
-                          onChange={e => updateForm({ identityTone: e.target.value }, 'identity')}
-                          placeholder="例如 专业、克制、对外沟通友好"
+                          value={form.identityAvatar}
+                          onChange={e => updateForm({ identityAvatar: e.target.value }, 'identity')}
+                          placeholder="工作区相对路径、http(s) URL 或 data URI"
                           className="w-full mt-1 px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900"
                         />
                       </div>
