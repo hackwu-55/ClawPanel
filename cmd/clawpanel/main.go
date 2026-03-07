@@ -209,6 +209,7 @@ func runServer(stopCh chan struct{}) {
 			auth.PUT("/openclaw/channels/:id", handler.SaveChannel(cfg))
 			auth.PUT("/openclaw/plugins/:id", handler.SavePlugin(cfg))
 			auth.POST("/openclaw/toggle-channel", handler.ToggleChannel(cfg, procMgr, napcatMon, sysLog))
+			auth.POST("/openclaw/feishu-variant", handler.SwitchFeishuVariant(cfg, procMgr, sysLog))
 
 			// 进程管理
 			auth.POST("/process/start", handler.StartProcess(procMgr, sysLog))

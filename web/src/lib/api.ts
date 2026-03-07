@@ -103,6 +103,7 @@ const _api = {
   checkConfig: () => get('/openclaw/config/check'),
   fixConfig: (issueIds: string[]) => post('/openclaw/config/fix', { issueIds }),
   toggleChannel: (channelId: string, enabled: boolean) => post('/openclaw/toggle-channel', { channelId, enabled }),
+  switchFeishuVariant: (variant: 'official' | 'clawteam') => post('/openclaw/feishu-variant', { variant }),
   // WeChat
   wechatStatus: () => get('/wechat/status'),
   wechatLoginUrl: () => get('/wechat/login-url'),

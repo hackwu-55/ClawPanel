@@ -77,6 +77,12 @@ const CHANNEL_DEFS: ChannelDef[] = [
     configFields: [
       { key: 'appId', label: 'App ID', type: 'text' },
       { key: 'appSecret', label: 'App Secret', type: 'password' },
+      { key: 'streaming', label: '流式卡片输出', type: 'toggle', help: '仅飞书官方版支持，开启后回复以流式卡片形式呈现' },
+      { key: 'threadSession', label: '话题独立上下文', type: 'toggle', help: '仅飞书官方版支持，每个话题拥有独立会话并可并行' },
+      { key: 'replyInThread', label: '话题内回复', type: 'toggle', help: '仅 ClawTeam 版支持，优先在话题内回复' },
+      { key: 'typingIndicator', label: '输入中提示', type: 'toggle', help: '仅 ClawTeam 版支持' },
+      { key: 'resolveSenderNames', label: '解析发送者名称', type: 'toggle', help: '仅 ClawTeam 版支持，自动解析飞书用户显示名' },
+      { key: 'dynamicAgentCreation', label: '动态创建 Agent', type: 'toggle', help: '仅 ClawTeam 版支持，按场景动态创建 Agent' },
     ] },
   { id: 'qqbot', label: 'QQ 官方机器人', description: 'QQ开放平台官方Bot API (插件)', type: 'plugin',
     configFields: [
@@ -123,11 +129,29 @@ const CHANNEL_DEFS: ChannelDef[] = [
     ] },
 ];
 
+// 飞书双版本：读取当前启用的变体
+function getActiveFeishuVariant(ocConfig: any): 'official' | 'clawteam' | null {
+  const entries = ocConfig?.plugins?.entries || {};
+  if (entries['feishu-openclaw-plugin']?.enabled) return 'official';
+  if (entries['feishu']?.enabled) return 'clawteam';
+  return null;
+}
+
+// 飞书双版本：获取当前活跃的 plugin entry ID
+function getFeishuPluginEntryId(ocConfig: any): string {
+  const variant = getActiveFeishuVariant(ocConfig);
+  if (variant === 'official') return 'feishu-openclaw-plugin';
+  return 'feishu';
+}
+
 // Determine channel status: 'enabled' (green), 'configured' (red/orange), 'unconfigured' (gray)
 function getChannelStatus(ch: ChannelDef, ocConfig: any): 'enabled' | 'configured' | 'unconfigured' {
   const chConf = ocConfig?.channels?.[ch.id] || {};
   const pluginConf = ocConfig?.plugins?.entries?.[ch.id] || {};
-  const isEnabled = chConf.enabled || pluginConf.enabled;
+  // 飞书特殊处理：任一变体 enabled 即视为 enabled
+  const isEnabled = ch.id === 'feishu'
+    ? (pluginConf.enabled || ocConfig?.plugins?.entries?.['feishu-openclaw-plugin']?.enabled || chConf.enabled)
+    : (chConf.enabled || pluginConf.enabled);
   // Check if any config field has a value
   const hasConfig = ch.configFields.some(f => {
     const v = chConf[f.key];
@@ -156,7 +180,7 @@ export default function Channels() {
   };
 
   const [status, setStatus] = useState<any>(null);
-  const [selectedChannel, setSelectedChannel] = useState('qq');
+  const [selectedChannel, setSelectedChannel] = useState('');
   const [ocConfig, setOcConfig] = useState<any>({});
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
@@ -226,6 +250,10 @@ export default function Channels() {
   };
 
   const isPluginInstalled = (channelId: string) => {
+    // 飞书特殊处理：任一版本已安装即视为已安装
+    if (channelId === 'feishu') {
+      return installedPlugins.some((p: any) => p.id === 'feishu' || p.id === 'feishu-openclaw-plugin');
+    }
     // Check if plugin extension is installed (in extensions dir or plugins.installs)
     return installedPlugins.some((p: any) => p.id === channelId);
   };
@@ -237,6 +265,20 @@ export default function Channels() {
   };
 
   useEffect(() => { reload(); loadSoftware(); loadNapcatStatus(); loadInstalledPlugins(); }, []);
+  // 自动选择第一个已启用的渠道（而非硬编码 QQ）
+  useEffect(() => {
+    if (selectedChannel) return; // 用户已手动选择
+    const firstEnabled = CHANNEL_DEFS.find(ch => {
+      const chConf = ocConfig?.channels?.[ch.id] || {};
+      const pluginConf = ocConfig?.plugins?.entries?.[ch.id] || {};
+      if (ch.id === 'feishu') {
+        return chConf.enabled || pluginConf.enabled || ocConfig?.plugins?.entries?.['feishu-openclaw-plugin']?.enabled;
+      }
+      return chConf.enabled || pluginConf.enabled;
+    });
+    if (firstEnabled) setSelectedChannel(firstEnabled.id);
+    else setSelectedChannel('feishu');
+  }, [ocConfig, selectedChannel]);
   useEffect(() => {
     const timer = setInterval(loadNapcatStatus, 30000);
     return () => clearInterval(timer);
@@ -270,6 +312,9 @@ export default function Channels() {
   };
 
   const isChannelEnabled = (channelId: string) => {
+    if (channelId === 'feishu') {
+      return ocPlugins[channelId]?.enabled || ocPlugins['feishu-openclaw-plugin']?.enabled || ocChannels[channelId]?.enabled || false;
+    }
     return ocChannels[channelId]?.enabled || ocPlugins[channelId]?.enabled || false;
   };
 
@@ -324,7 +369,13 @@ export default function Channels() {
         }
       }
       await api.updateChannel(currentDef.id, chData);
-      if (currentDef.type === 'plugin') await api.updatePlugin(currentDef.id, { enabled: chData.enabled || false });
+      // 飞书特殊处理：保存时操作当前活跃变体的 plugin entry
+      if (currentDef.id === 'feishu') {
+        const entryId = getFeishuPluginEntryId(ocConfig);
+        await api.updatePlugin(entryId, { enabled: chData.enabled || false });
+      } else if (currentDef.type === 'plugin') {
+        await api.updatePlugin(currentDef.id, { enabled: chData.enabled || false });
+      }
       setMsg(t.channels.saveSuccess);
       reload();
       setTimeout(() => setMsg(''), 2000);
@@ -346,6 +397,20 @@ export default function Channels() {
       await api.updateChannel(channelId, chConf);
       reload();
     } catch {}
+  };
+
+  // 飞书版本切换
+  const handleSwitchFeishuVariant = async (variant: 'official' | 'clawteam') => {
+    try {
+      const r = await api.switchFeishuVariant(variant);
+      if (r.ok) {
+        setMsg(r.message || '飞书版本已切换');
+      } else {
+        setMsg(r.error || '切换失败');
+      }
+      reload();
+      setTimeout(() => setMsg(''), 5000);
+    } catch (err) { setMsg('切换失败: ' + String(err)); setTimeout(() => setMsg(''), 3000); }
   };
 
   // === QQ Login handlers ===
@@ -862,6 +927,46 @@ export default function Channels() {
                   <Loader2 size={32} className="animate-spin text-orange-500" />
                   <p className="text-sm font-medium text-orange-600 dark:text-orange-400">NapCat 正在重启中，请稍候...</p>
                   <p className="text-[11px] text-gray-400">重启期间 QQ 将暂时离线，通常需要 15-30 秒</p>
+                </div>
+              )}
+
+              {/* 飞书双版本选择器 */}
+              {currentDef.id === 'feishu' && (
+                <div className="rounded-xl border border-violet-200 dark:border-violet-800 bg-violet-50/50 dark:bg-violet-900/10 p-4 space-y-3">
+                  <div className="text-sm font-semibold text-gray-900 dark:text-white">当前飞书实现</div>
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <label className={`flex-1 flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all ${
+                      getActiveFeishuVariant(ocConfig) === 'official'
+                        ? 'border-violet-500 bg-violet-100/50 dark:bg-violet-900/20'
+                        : 'border-gray-200 dark:border-gray-700 hover:border-violet-300 dark:hover:border-violet-600'
+                    }`}>
+                      <input type="radio" name="feishu-variant" value="official"
+                        checked={getActiveFeishuVariant(ocConfig) === 'official'}
+                        onChange={() => handleSwitchFeishuVariant('official')}
+                        className="mt-0.5 accent-violet-600" />
+                      <div>
+                        <div className="text-sm font-medium text-gray-900 dark:text-white">飞书官方版</div>
+                        <div className="text-[11px] text-gray-500 mt-0.5">支持用户身份授权、文档/日历/任务操作、流式卡片、话题独立上下文</div>
+                      </div>
+                    </label>
+                    <label className={`flex-1 flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all ${
+                      getActiveFeishuVariant(ocConfig) === 'clawteam'
+                        ? 'border-violet-500 bg-violet-100/50 dark:bg-violet-900/20'
+                        : 'border-gray-200 dark:border-gray-700 hover:border-violet-300 dark:hover:border-violet-600'
+                    }`}>
+                      <input type="radio" name="feishu-variant" value="clawteam"
+                        checked={getActiveFeishuVariant(ocConfig) === 'clawteam'}
+                        onChange={() => handleSwitchFeishuVariant('clawteam')}
+                        className="mt-0.5 accent-violet-600" />
+                      <div>
+                        <div className="text-sm font-medium text-gray-900 dark:text-white">ClawTeam 社区版</div>
+                        <div className="text-[11px] text-gray-500 mt-0.5">社区维护的基础飞书通道插件，支持话题回复、输入提示等</div>
+                      </div>
+                    </label>
+                  </div>
+                  {!getActiveFeishuVariant(ocConfig) && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400">未检测到已启用的飞书插件，请选择一个版本并启用</p>
+                  )}
                 </div>
               )}
 

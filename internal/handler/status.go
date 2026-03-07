@@ -60,11 +60,19 @@ func GetStatus(db *sql.DB, cfg *config.Config, procMgr *process.Manager) gin.Han
 			// 扫描 plugins.entries
 			if plugins, ok := ocConfig["plugins"].(map[string]interface{}); ok {
 				if entries, ok := plugins["entries"].(map[string]interface{}); ok {
+					// 飞书别名映射：feishu-openclaw-plugin 映射为 feishu，避免重复
+					channelAliases := map[string]string{
+						"feishu-openclaw-plugin": "feishu",
+					}
 					for id, conf := range entries {
-						// 检查是否已在 channels 中
+						canonicalID := id
+						if alias, ok := channelAliases[id]; ok {
+							canonicalID = alias
+						}
+						// 检查是否已在 channels 中（用规范 ID 检查）
 						found := false
 						for _, ch := range channels {
-							if ch.ID == id {
+							if ch.ID == canonicalID || ch.ID == id {
 								found = true
 								break
 							}
@@ -74,11 +82,14 @@ func GetStatus(db *sql.DB, cfg *config.Config, procMgr *process.Manager) gin.Han
 						}
 						if m, ok := conf.(map[string]interface{}); ok {
 							if enabled, _ := m["enabled"].(bool); enabled {
-								label := channelLabels[id]
+								label := channelLabels[canonicalID]
+								if label == "" {
+									label = channelLabels[id]
+								}
 								if label == "" {
 									label = id
 								}
-								channels = append(channels, enabledChannel{ID: id, Label: label, Type: "plugin"})
+								channels = append(channels, enabledChannel{ID: canonicalID, Label: label, Type: "plugin"})
 							}
 						}
 					}

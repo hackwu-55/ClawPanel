@@ -329,12 +329,33 @@ func ToggleChannel(cfg *config.Config, procMgr *process.Manager, napcatMon *moni
 		if entries == nil {
 			entries = map[string]interface{}{}
 		}
-		pe, _ := entries[req.ChannelID].(map[string]interface{})
-		if pe == nil {
-			pe = map[string]interface{}{}
+
+		// 飞书特殊处理：确定当前活跃的 plugin entry ID，启用/禁用正确的条目
+		if req.ChannelID == "feishu" {
+			activeEntryID := resolveActiveFeishuEntryID(entries)
+			pe, _ := entries[activeEntryID].(map[string]interface{})
+			if pe == nil {
+				pe = map[string]interface{}{}
+			}
+			pe["enabled"] = req.Enabled
+			entries[activeEntryID] = pe
+			// 禁用另一个变体（如果存在）
+			otherID := "feishu"
+			if activeEntryID == "feishu" {
+				otherID = "feishu-openclaw-plugin"
+			}
+			if otherEntry, ok := entries[otherID].(map[string]interface{}); ok {
+				otherEntry["enabled"] = false
+				entries[otherID] = otherEntry
+			}
+		} else {
+			pe, _ := entries[req.ChannelID].(map[string]interface{})
+			if pe == nil {
+				pe = map[string]interface{}{}
+			}
+			pe["enabled"] = req.Enabled
+			entries[req.ChannelID] = pe
 		}
-		pe["enabled"] = req.Enabled
-		entries[req.ChannelID] = pe
 		plugins["entries"] = entries
 		ocConfig["plugins"] = plugins
 
@@ -491,4 +512,89 @@ func writeRestartSignal(cfg *config.Config, reason string) {
 		"reason":      reason,
 	})
 	os.WriteFile(signalPath, data, 0644)
+}
+
+// resolveActiveFeishuEntryID 返回当前启用的飞书插件 entry ID
+func resolveActiveFeishuEntryID(entries map[string]interface{}) string {
+	for _, id := range []string{"feishu-openclaw-plugin", "feishu"} {
+		if entry, ok := entries[id].(map[string]interface{}); ok {
+			if enabled, _ := entry["enabled"].(bool); enabled {
+				return id
+			}
+		}
+	}
+	// 没有 enabled 的，返回有 entry 的第一个
+	for _, id := range []string{"feishu-openclaw-plugin", "feishu"} {
+		if entries[id] != nil {
+			return id
+		}
+	}
+	return "feishu"
+}
+
+// SwitchFeishuVariant 切换飞书插件版本（官方版 / ClawTeam 版）
+func SwitchFeishuVariant(cfg *config.Config, procMgr *process.Manager, sysLog ...*eventlog.SystemLogger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req struct {
+			Variant string `json:"variant"` // "official" 或 "clawteam"
+		}
+		if err := c.ShouldBindJSON(&req); err != nil || (req.Variant != "official" && req.Variant != "clawteam") {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "variant must be 'official' or 'clawteam'"})
+			return
+		}
+
+		ocConfig, _ := cfg.ReadOpenClawJSON()
+		if ocConfig == nil {
+			ocConfig = map[string]interface{}{}
+		}
+
+		plugins, _ := ocConfig["plugins"].(map[string]interface{})
+		if plugins == nil {
+			plugins = map[string]interface{}{}
+		}
+		entries, _ := plugins["entries"].(map[string]interface{})
+		if entries == nil {
+			entries = map[string]interface{}{}
+		}
+
+		// 互斥设置 enabled
+		enableID := "feishu"
+		disableID := "feishu-openclaw-plugin"
+		label := "ClawTeam 社区版"
+		if req.Variant == "official" {
+			enableID = "feishu-openclaw-plugin"
+			disableID = "feishu"
+			label = "飞书官方版"
+		}
+
+		enableEntry, _ := entries[enableID].(map[string]interface{})
+		if enableEntry == nil {
+			enableEntry = map[string]interface{}{}
+		}
+		enableEntry["enabled"] = true
+		entries[enableID] = enableEntry
+
+		disableEntry, _ := entries[disableID].(map[string]interface{})
+		if disableEntry == nil {
+			disableEntry = map[string]interface{}{}
+		}
+		disableEntry["enabled"] = false
+		entries[disableID] = disableEntry
+
+		plugins["entries"] = entries
+		ocConfig["plugins"] = plugins
+
+		if err := cfg.WriteOpenClawJSON(ocConfig); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+
+		writeRestartSignal(cfg, "feishu variant switched to "+req.Variant)
+
+		if len(sysLog) > 0 && sysLog[0] != nil {
+			sysLog[0].Log("system", "channel.variant_switched", "飞书通道切换为"+label)
+		}
+
+		c.JSON(http.StatusOK, gin.H{"ok": true, "message": "飞书通道已切换为" + label})
+	}
 }
