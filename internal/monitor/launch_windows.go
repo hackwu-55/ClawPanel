@@ -135,22 +135,30 @@ func launchAsInteractiveUser(cmdLine, workDir string, extraEnv []string) error {
 
 	// Create environment block for the user token.
 	var rawEnvBlock *uint16
-	procCreateEnvironmentBlock.Call(
+	r, _, e = procCreateEnvironmentBlock.Call(
 		uintptr(unsafe.Pointer(&rawEnvBlock)),
 		uintptr(hDupToken),
 		0,
 	)
+	createEnvOK := r != 0 && rawEnvBlock != nil
+	if !createEnvOK {
+		log.Printf("[NapCat] CreateEnvironmentBlock failed, falling back to current process env baseline: %v", e)
+	}
 
 	// Build the final env block (user env merged with extraEnv overrides).
 	var finalEnvBlock uintptr
 	var mergedEnv []uint16
-	if len(extraEnv) > 0 && rawEnvBlock != nil {
-		mergedEnv = mergeEnvBlock(rawEnvBlock, extraEnv)
-		procDestroyEnvironmentBlock.Call(uintptr(unsafe.Pointer(rawEnvBlock)))
+	if len(extraEnv) > 0 {
+		if createEnvOK {
+			mergedEnv = mergeEnvBlock(rawEnvBlock, extraEnv)
+			procDestroyEnvironmentBlock.Call(uintptr(unsafe.Pointer(rawEnvBlock)))
+		} else {
+			mergedEnv = mergeEnvPairs(os.Environ(), extraEnv)
+		}
 		finalEnvBlock = uintptr(unsafe.Pointer(&mergedEnv[0]))
 	} else {
 		finalEnvBlock = uintptr(unsafe.Pointer(rawEnvBlock))
-		if rawEnvBlock != nil {
+		if createEnvOK {
 			defer procDestroyEnvironmentBlock.Call(uintptr(unsafe.Pointer(rawEnvBlock)))
 		}
 	}
@@ -241,24 +249,26 @@ func findExplorerPID() (uint32, error) {
 func mergeEnvBlock(rawBlock *uint16, extraEnv []string) []uint16 {
 	// Parse existing env block (null-separated UTF-16 pairs, double-null terminated)
 	env := map[string]string{}
-	ptr := unsafe.Pointer(rawBlock)
-	for {
-		// Read null-terminated UTF-16 string
-		var chars []uint16
+	if rawBlock != nil {
+		ptr := unsafe.Pointer(rawBlock)
 		for {
-			w := *(*uint16)(ptr)
-			ptr = unsafe.Add(ptr, unsafe.Sizeof(uint16(0)))
-			if w == 0 {
-				break
+			// Read null-terminated UTF-16 string
+			var chars []uint16
+			for {
+				w := *(*uint16)(ptr)
+				ptr = unsafe.Add(ptr, unsafe.Sizeof(uint16(0)))
+				if w == 0 {
+					break
+				}
+				chars = append(chars, w)
 			}
-			chars = append(chars, w)
-		}
-		if len(chars) == 0 {
-			break // double-null: end of block
-		}
-		kv := windows.UTF16ToString(chars)
-		if idx := strings.Index(kv, "="); idx > 0 {
-			env[strings.ToUpper(kv[:idx])] = kv[idx+1:]
+			if len(chars) == 0 {
+				break // double-null: end of block
+			}
+			kv := windows.UTF16ToString(chars)
+			if idx := strings.Index(kv, "="); idx > 0 {
+				env[strings.ToUpper(kv[:idx])] = kv[idx+1:]
+			}
 		}
 	}
 	// Override with extra vars
@@ -275,6 +285,29 @@ func mergeEnvBlock(rawBlock *uint16, extraEnv []string) []uint16 {
 		out = append(out, u16...) // includes null terminator from UTF16FromString
 	}
 	out = append(out, 0) // double-null terminator
+	return out
+}
+
+func mergeEnvPairs(baseEnv, extraEnv []string) []uint16 {
+	env := map[string]string{}
+	for _, kv := range baseEnv {
+		if idx := strings.Index(kv, "="); idx > 0 {
+			env[strings.ToUpper(kv[:idx])] = kv[idx+1:]
+		}
+	}
+	for _, kv := range extraEnv {
+		if idx := strings.Index(kv, "="); idx > 0 {
+			env[strings.ToUpper(kv[:idx])] = kv[idx+1:]
+		}
+	}
+
+	var out []uint16
+	for k, v := range env {
+		entry := k + "=" + v
+		u16, _ := windows.UTF16FromString(entry)
+		out = append(out, u16...)
+	}
+	out = append(out, 0)
 	return out
 }
 
