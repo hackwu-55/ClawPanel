@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 	"unsafe"
@@ -16,55 +17,55 @@ import (
 )
 
 var (
-	modKernel32             = windows.NewLazySystemDLL("kernel32.dll")
-	modAdvapi32             = windows.NewLazySystemDLL("advapi32.dll")
-	modWtsapi32             = windows.NewLazySystemDLL("wtsapi32.dll")
-	procOpenProcessToken    = modAdvapi32.NewProc("OpenProcessToken")
-	procDuplicateTokenEx    = modAdvapi32.NewProc("DuplicateTokenEx")
-	procSetTokenInformation = modAdvapi32.NewProc("SetTokenInformation")
-	procCreateProcessAsUserW = modAdvapi32.NewProc("CreateProcessAsUserW")
+	modKernel32                     = windows.NewLazySystemDLL("kernel32.dll")
+	modAdvapi32                     = windows.NewLazySystemDLL("advapi32.dll")
+	modWtsapi32                     = windows.NewLazySystemDLL("wtsapi32.dll")
+	procOpenProcessToken            = modAdvapi32.NewProc("OpenProcessToken")
+	procDuplicateTokenEx            = modAdvapi32.NewProc("DuplicateTokenEx")
+	procSetTokenInformation         = modAdvapi32.NewProc("SetTokenInformation")
+	procCreateProcessAsUserW        = modAdvapi32.NewProc("CreateProcessAsUserW")
 	procWTSQuerySessionInformationW = modWtsapi32.NewProc("WTSQuerySessionInformationW")
-	procWTSFreeMemory       = modWtsapi32.NewProc("WTSFreeMemory")
-	modUserenv              = windows.NewLazySystemDLL("userenv.dll")
-	procCreateEnvironmentBlock  = modUserenv.NewProc("CreateEnvironmentBlock")
-	procDestroyEnvironmentBlock = modUserenv.NewProc("DestroyEnvironmentBlock")
+	procWTSFreeMemory               = modWtsapi32.NewProc("WTSFreeMemory")
+	modUserenv                      = windows.NewLazySystemDLL("userenv.dll")
+	procCreateEnvironmentBlock      = modUserenv.NewProc("CreateEnvironmentBlock")
+	procDestroyEnvironmentBlock     = modUserenv.NewProc("DestroyEnvironmentBlock")
 )
 
 const (
-	TOKEN_DUPLICATE          = 0x0002
-	TOKEN_QUERY              = 0x0008
-	TOKEN_ASSIGN_PRIMARY     = 0x0001
-	TOKEN_ADJUST_PRIVILEGES  = 0x0020
-	TOKEN_ADJUST_SESSIONID   = 0x0100
-	TOKEN_ADJUST_DEFAULT     = 0x0080
-	SecurityImpersonation    = 2
-	TokenPrimary             = 1
-	TokenSessionId           = 12
+	TOKEN_DUPLICATE            = 0x0002
+	TOKEN_QUERY                = 0x0008
+	TOKEN_ASSIGN_PRIMARY       = 0x0001
+	TOKEN_ADJUST_PRIVILEGES    = 0x0020
+	TOKEN_ADJUST_SESSIONID     = 0x0100
+	TOKEN_ADJUST_DEFAULT       = 0x0080
+	SecurityImpersonation      = 2
+	TokenPrimary               = 1
+	TokenSessionId             = 12
 	CREATE_UNICODE_ENVIRONMENT = 0x00000400
-	NORMAL_PRIORITY_CLASS    = 0x00000020
-	CREATE_NEW_CONSOLE       = 0x00000010
-	CREATE_NO_WINDOW         = 0x08000000
+	NORMAL_PRIORITY_CLASS      = 0x00000020
+	CREATE_NEW_CONSOLE         = 0x00000010
+	CREATE_NO_WINDOW           = 0x08000000
 )
 
 type STARTUPINFOW struct {
-	Cb            uint32
-	LpReserved    *uint16
-	LpDesktop     *uint16
-	LpTitle       *uint16
-	DwX           uint32
-	DwY           uint32
-	DwXSize       uint32
-	DwYSize       uint32
-	DwXCountChars uint32
-	DwYCountChars uint32
+	Cb              uint32
+	LpReserved      *uint16
+	LpDesktop       *uint16
+	LpTitle         *uint16
+	DwX             uint32
+	DwY             uint32
+	DwXSize         uint32
+	DwYSize         uint32
+	DwXCountChars   uint32
+	DwYCountChars   uint32
 	DwFillAttribute uint32
-	DwFlags       uint32
-	WShowWindow   uint16
-	CbReserved2   uint16
-	LpReserved2   *byte
-	HStdInput     windows.Handle
-	HStdOutput    windows.Handle
-	HStdError     windows.Handle
+	DwFlags         uint32
+	WShowWindow     uint16
+	CbReserved2     uint16
+	LpReserved2     *byte
+	HStdInput       windows.Handle
+	HStdOutput      windows.Handle
+	HStdError       windows.Handle
 }
 
 type PROCESS_INFORMATION struct {
@@ -133,23 +134,32 @@ func launchAsInteractiveUser(cmdLine, workDir string, extraEnv []string) error {
 	)
 
 	// Create environment block for the user token.
-	var rawEnvBlock uintptr
-	procCreateEnvironmentBlock.Call(
+	var rawEnvBlock *uint16
+	r, _, e = procCreateEnvironmentBlock.Call(
 		uintptr(unsafe.Pointer(&rawEnvBlock)),
 		uintptr(hDupToken),
 		0,
 	)
+	createEnvOK := r != 0 && rawEnvBlock != nil
+	if !createEnvOK {
+		log.Printf("[NapCat] CreateEnvironmentBlock failed, falling back to current process env baseline: %v", e)
+	}
 
 	// Build the final env block (user env merged with extraEnv overrides).
 	var finalEnvBlock uintptr
-	if len(extraEnv) > 0 && rawEnvBlock != 0 {
-		merged := mergeEnvBlock(rawEnvBlock, extraEnv)
-		procDestroyEnvironmentBlock.Call(rawEnvBlock)
-		finalEnvBlock = uintptr(unsafe.Pointer(&merged[0]))
+	var mergedEnv []uint16
+	if len(extraEnv) > 0 {
+		if createEnvOK {
+			mergedEnv = mergeEnvBlock(rawEnvBlock, extraEnv)
+			procDestroyEnvironmentBlock.Call(uintptr(unsafe.Pointer(rawEnvBlock)))
+		} else {
+			mergedEnv = mergeEnvPairs(os.Environ(), extraEnv)
+		}
+		finalEnvBlock = uintptr(unsafe.Pointer(&mergedEnv[0]))
 	} else {
-		finalEnvBlock = rawEnvBlock
-		if rawEnvBlock != 0 {
-			defer procDestroyEnvironmentBlock.Call(rawEnvBlock)
+		finalEnvBlock = uintptr(unsafe.Pointer(rawEnvBlock))
+		if createEnvOK {
+			defer procDestroyEnvironmentBlock.Call(uintptr(unsafe.Pointer(rawEnvBlock)))
 		}
 	}
 
@@ -188,6 +198,7 @@ func launchAsInteractiveUser(cmdLine, workDir string, extraEnv []string) error {
 		uintptr(unsafe.Pointer(&si)),
 		uintptr(unsafe.Pointer(&pi)),
 	)
+	runtime.KeepAlive(mergedEnv)
 	if r == 0 {
 		return fmt.Errorf("CreateProcessAsUserW: %w", e)
 	}
@@ -235,27 +246,29 @@ func findExplorerPID() (uint32, error) {
 // mergeEnvBlock parses the Windows UTF-16 environment block at rawBlock,
 // overrides/adds the key=value pairs from extraEnv, and returns a new
 // UTF-16 double-null-terminated env block suitable for CreateProcessAsUserW.
-func mergeEnvBlock(rawBlock uintptr, extraEnv []string) []uint16 {
+func mergeEnvBlock(rawBlock *uint16, extraEnv []string) []uint16 {
 	// Parse existing env block (null-separated UTF-16 pairs, double-null terminated)
 	env := map[string]string{}
-	ptr := rawBlock
-	for {
-		// Read null-terminated UTF-16 string
-		var chars []uint16
+	if rawBlock != nil {
+		ptr := unsafe.Pointer(rawBlock)
 		for {
-			w := *(*uint16)(unsafe.Pointer(ptr))
-			ptr += 2
-			if w == 0 {
-				break
+			// Read null-terminated UTF-16 string
+			var chars []uint16
+			for {
+				w := *(*uint16)(ptr)
+				ptr = unsafe.Add(ptr, unsafe.Sizeof(uint16(0)))
+				if w == 0 {
+					break
+				}
+				chars = append(chars, w)
 			}
-			chars = append(chars, w)
-		}
-		if len(chars) == 0 {
-			break // double-null: end of block
-		}
-		kv := windows.UTF16ToString(chars)
-		if idx := strings.Index(kv, "="); idx > 0 {
-			env[strings.ToUpper(kv[:idx])] = kv[idx+1:]
+			if len(chars) == 0 {
+				break // double-null: end of block
+			}
+			kv := windows.UTF16ToString(chars)
+			if idx := strings.Index(kv, "="); idx > 0 {
+				env[strings.ToUpper(kv[:idx])] = kv[idx+1:]
+			}
 		}
 	}
 	// Override with extra vars
@@ -272,6 +285,29 @@ func mergeEnvBlock(rawBlock uintptr, extraEnv []string) []uint16 {
 		out = append(out, u16...) // includes null terminator from UTF16FromString
 	}
 	out = append(out, 0) // double-null terminator
+	return out
+}
+
+func mergeEnvPairs(baseEnv, extraEnv []string) []uint16 {
+	env := map[string]string{}
+	for _, kv := range baseEnv {
+		if idx := strings.Index(kv, "="); idx > 0 {
+			env[strings.ToUpper(kv[:idx])] = kv[idx+1:]
+		}
+	}
+	for _, kv := range extraEnv {
+		if idx := strings.Index(kv, "="); idx > 0 {
+			env[strings.ToUpper(kv[:idx])] = kv[idx+1:]
+		}
+	}
+
+	var out []uint16
+	for k, v := range env {
+		entry := k + "=" + v
+		u16, _ := windows.UTF16FromString(entry)
+		out = append(out, u16...)
+	}
+	out = append(out, 0)
 	return out
 }
 
@@ -344,12 +380,12 @@ func launchNapCatInUserSession(exePath, workDir string) error {
 // getSession1Username returns the domain\username of the user logged into session 1
 // using WTSQuerySessionInformationW which returns proper Unicode strings.
 func getSession1Username() string {
-	const WTSUserName   = 5
+	const WTSUserName = 5
 	const WTSDomainName = 7
 	const WTS_CURRENT_SERVER_HANDLE = 0
 
 	getDomainUser := func(sessionID uint32, infoClass uintptr) string {
-		var pBuf uintptr
+		var pBuf *uint16
 		var bytes uint32
 		r, _, _ := procWTSQuerySessionInformationW.Call(
 			WTS_CURRENT_SERVER_HANDLE,
@@ -358,24 +394,21 @@ func getSession1Username() string {
 			uintptr(unsafe.Pointer(&pBuf)),
 			uintptr(unsafe.Pointer(&bytes)),
 		)
-		if r == 0 || pBuf == 0 {
+		if r == 0 || pBuf == nil {
 			return ""
 		}
-		defer procWTSFreeMemory.Call(pBuf)
+		defer procWTSFreeMemory.Call(uintptr(unsafe.Pointer(pBuf)))
 		// pBuf points to a null-terminated UTF-16 string
 		nChars := bytes / 2
 		if nChars == 0 {
 			return ""
 		}
-		u16 := make([]uint16, nChars)
-		for i := uintptr(0); i < uintptr(nChars); i++ {
-			u16[i] = *(*uint16)(unsafe.Pointer(pBuf + i*2))
-		}
+		u16 := unsafe.Slice(pBuf, nChars)
 		return windows.UTF16ToString(u16)
 	}
 
 	domain := getDomainUser(1, WTSDomainName)
-	user   := getDomainUser(1, WTSUserName)
+	user := getDomainUser(1, WTSUserName)
 	if user == "" {
 		return ""
 	}

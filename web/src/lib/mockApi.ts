@@ -33,11 +33,65 @@ const FAKE_AGENTS = {
   default: 'main',
   defaults: { model: { primary: 'deepseek/deepseek-chat' } },
   list: [
-    { id: 'main', default: true, workspace: '/work/main', agentDir: 'agents/main', sessions: 12, lastActive: Date.now() - 60000 },
-    { id: 'work', default: false, workspace: '/work/work', agentDir: 'agents/work', sessions: 4, lastActive: Date.now() - 3600000 },
+    {
+      id: 'main',
+      default: true,
+      workspace: '/workspaces/main',
+      agentDir: 'agents/main',
+      sessions: 12,
+      lastActive: Date.now() - 60000,
+      tools: {
+        profile: 'full',
+        agentToAgent: { enabled: true, allow: ['translation', 'reviewer'] },
+        sessions: { visibility: 'same-agent' },
+      },
+      groupChat: { enabled: true },
+      sandbox: { mode: 'all', workspaceAccess: 'rw' },
+      identity: { name: 'Main Assistant', description: '负责默认路由与综合问题处理', tone: '专业、稳定' },
+    },
+    {
+      id: 'work',
+      default: false,
+      workspace: '/workspaces/work',
+      agentDir: 'agents/work',
+      sessions: 4,
+      lastActive: Date.now() - 3600000,
+      tools: {
+        profile: 'coding',
+        allow: ['read', 'edit', 'exec'],
+        deny: ['browser'],
+        agentToAgent: { enabled: true, allow: ['main'] },
+      },
+      groupChat: { enabled: false },
+      sandbox: { mode: 'all', workspaceAccess: 'ro' },
+      identity: { name: 'Work Specialist', description: '处理工作流与执行类请求', tone: '直接、聚焦结果' },
+    },
   ],
   bindings: [
     { name: 'work-group', enabled: true, agent: 'work', match: { channel: 'qq', peer: 'group:123' } },
+  ],
+};
+
+const FAKE_AGENT_CORE_FILES: Record<string, any[]> = {
+  main: [
+    { name: 'AGENTS.md', path: '/workspaces/main/AGENTS.md', exists: true, size: 720, modified: new Date(Date.now() - 3600000).toISOString(), content: '# AGENTS.md\n\nMain agent instructions.' },
+    { name: 'SOUL.md', path: '/workspaces/main/SOUL.md', exists: true, size: 248, modified: new Date(Date.now() - 7200000).toISOString(), content: '# SOUL.md\n\nStay calm and helpful.' },
+    { name: 'TOOLS.md', path: '/workspaces/main/TOOLS.md', exists: true, size: 312, modified: new Date(Date.now() - 9600000).toISOString(), content: '# TOOLS.md\n\nPrefer structured tool usage.' },
+    { name: 'IDENTITY.md', path: '/workspaces/main/IDENTITY.md', exists: true, size: 154, modified: new Date(Date.now() - 9600000).toISOString(), content: '# IDENTITY.md\n\nMain assistant identity.' },
+    { name: 'USER.md', path: '/workspaces/main/USER.md', exists: true, size: 120, modified: new Date(Date.now() - 18600000).toISOString(), content: '# USER.md\n\nPrimary operator notes.' },
+    { name: 'HEARTBEAT.md', path: '/workspaces/main/HEARTBEAT.md', exists: true, size: 88, modified: new Date(Date.now() - 28600000).toISOString(), content: '# HEARTBEAT.md\n\nCheck status regularly.' },
+    { name: 'BOOTSTRAP.md', path: '/workspaces/main/BOOTSTRAP.md', exists: true, size: 132, modified: new Date(Date.now() - 38600000).toISOString(), content: '# BOOTSTRAP.md\n\nBootstrap sequence.' },
+    { name: 'MEMORY.md', path: '/workspaces/main/MEMORY.md', exists: false, size: 0, content: '' },
+  ],
+  work: [
+    { name: 'AGENTS.md', path: '/workspaces/work/AGENTS.md', exists: true, size: 340, modified: new Date(Date.now() - 4600000).toISOString(), content: '# AGENTS.md\n\nWork specialist instructions.' },
+    { name: 'SOUL.md', path: '/workspaces/work/SOUL.md', exists: false, size: 0, content: '' },
+    { name: 'TOOLS.md', path: '/workspaces/work/TOOLS.md', exists: true, size: 160, modified: new Date(Date.now() - 5600000).toISOString(), content: '# TOOLS.md\n\nKeep execution scoped.' },
+    { name: 'IDENTITY.md', path: '/workspaces/work/IDENTITY.md', exists: true, size: 144, modified: new Date(Date.now() - 8600000).toISOString(), content: '# IDENTITY.md\n\nWork specialist.' },
+    { name: 'USER.md', path: '/workspaces/work/USER.md', exists: false, size: 0, content: '' },
+    { name: 'HEARTBEAT.md', path: '/workspaces/work/HEARTBEAT.md', exists: false, size: 0, content: '' },
+    { name: 'BOOTSTRAP.md', path: '/workspaces/work/BOOTSTRAP.md', exists: true, size: 118, modified: new Date(Date.now() - 18600000).toISOString(), content: '# BOOTSTRAP.md\n\nWork bootstrap.' },
+    { name: 'MEMORY.md', path: '/workspaces/work/MEMORY.md', exists: true, size: 90, modified: new Date(Date.now() - 9600000).toISOString(), content: '# MEMORY.md\n\nRecent work context.' },
   ],
 };
 
@@ -78,7 +132,7 @@ export const mockApi = {
       napcat: { connected: true, selfId: '2854196310', nickname: 'OpenClaw Demo Bot', groupCount: 12, friendCount: 86 },
       wechat: { loggedIn: false },
       admin: { uptime: 172800, memoryMB: 256 },
-      openclaw: { currentModel: 'deepseek/deepseek-chat', enabledChannels: [
+      openclaw: { configured: true, currentModel: 'deepseek/deepseek-chat', enabledChannels: [
         { id: 'qq', label: 'QQ (NapCat)', type: 'builtin' },
         { id: 'telegram', label: 'Telegram', type: 'plugin' },
       ] },
@@ -90,6 +144,24 @@ export const mockApi = {
   createAgent: async (_agent: any) => { await delay(200); return { ok: true }; },
   updateAgent: async (_id: string, _agent: any) => { await delay(200); return { ok: true }; },
   deleteAgent: async (_id: string, _preserveSessions = true) => { await delay(200); return { ok: true }; },
+  getAgentCoreFiles: async (id: string) => {
+    await delay(160);
+    const files = FAKE_AGENT_CORE_FILES[id] || FAKE_AGENT_CORE_FILES.main;
+    const workspace = (FAKE_AGENTS.list.find(agent => agent.id === id) || FAKE_AGENTS.list[0])?.workspace || '';
+    return { ok: true, agentId: id, workspace, files: JSON.parse(JSON.stringify(files)) };
+  },
+  saveAgentCoreFile: async (id: string, name: string, content: string) => {
+    await delay(180);
+    const list = FAKE_AGENT_CORE_FILES[id] || FAKE_AGENT_CORE_FILES.main;
+    const next = list.find(file => file.name === name);
+    if (next) {
+      next.content = content;
+      next.exists = true;
+      next.size = content.length;
+      next.modified = new Date().toISOString();
+    }
+    return { ok: true };
+  },
   getBindings: async () => { await delay(120); return { ok: true, bindings: JSON.parse(JSON.stringify(FAKE_AGENTS.bindings)) }; },
   updateBindings: async (_bindings: any[]) => { await delay(200); return { ok: true }; },
   previewRoute: async (_meta: any) => { await delay(180); return { ok: true, result: { agent: 'work', matchedBy: 'bindings[0].match.peer', trace: ['hit bindings[0]'] } }; },
@@ -158,6 +230,8 @@ export const mockApi = {
   checkUpdate: async () => { await delay(1000); return { ok: true, updateAvailable: false, currentVersion: '4.2.1', latestVersion: '4.2.1' }; },
   doUpdate: async () => { await delay(2000); return { ok: true }; },
   getUpdateStatus: async () => { await delay(100); return { ok: true, status: 'idle' }; },
+  getUpdatePopup: async () => { await delay(80); return { ok: true, show: false, version: '', releaseNote: '' }; },
+  markUpdatePopupShown: async () => { await delay(50); return { ok: true }; },
   restartGateway: async () => { await delay(500); return { ok: true }; },
   getRestartGatewayStatus: async () => { await delay(100); return { ok: true, status: 'ok' }; },
   getAdminToken: async () => { await delay(100); return { ok: true, token: 'demo-admin-token' }; },
@@ -165,6 +239,8 @@ export const mockApi = {
   setSudoPassword: async () => { await delay(200); return { ok: true }; },
   getEvents: async () => { await delay(200); return { ok: true, events: FAKE_LOGS }; },
   clearEvents: async () => { await delay(100); return { ok: true }; },
+  getTasks: async () => { await delay(80); return { ok: true, tasks: [] }; },
+  getTaskDetail: async (_id: string) => { await delay(80); return { ok: true, task: null }; },
 };
 
 // Fake WebSocket data for demo

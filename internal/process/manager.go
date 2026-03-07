@@ -7,6 +7,8 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,25 +25,39 @@ import (
 
 // Status 进程状态
 type Status struct {
-	Running   bool      `json:"running"`
-	PID       int       `json:"pid"`
-	StartedAt time.Time `json:"startedAt,omitempty"`
-	Uptime    int64     `json:"uptime"` // 秒
-	ExitCode  int       `json:"exitCode,omitempty"`
+	Running           bool      `json:"running"`
+	PID               int       `json:"pid"`
+	StartedAt         time.Time `json:"startedAt,omitempty"`
+	Uptime            int64     `json:"uptime"` // 秒
+	ExitCode          int       `json:"exitCode,omitempty"`
+	Daemonized        bool      `json:"daemonized,omitempty"`
+	ManagedExternally bool      `json:"managedExternally,omitempty"`
 }
 
 // Manager 进程管理器
 type Manager struct {
-	cfg       *config.Config
-	cmd       *exec.Cmd
-	status    Status
-	mu        sync.RWMutex
-	logLines  []string
-	logMu     sync.RWMutex
-	maxLog    int
-	stopCh    chan struct{}
-	logReader io.ReadCloser
+	cfg                *config.Config
+	cmd                *exec.Cmd
+	daemonized         bool
+	bindHostCheck      func(host string) bool
+	gatewayProbe       func(host, port string) bool
+	lastGatewayProbeAt time.Time
+	lastGatewayProbeOK bool
+	status             Status
+	mu                 sync.RWMutex
+	logLines           []string
+	logMu              sync.RWMutex
+	maxLog             int
+	stopCh             chan struct{}
+	logReader          io.ReadCloser
 }
+
+const gatewayProbeCacheTTL = 3 * time.Second
+
+var (
+	tailnetIPv4Net = mustCIDR("100.64.0.0/10")
+	tailnetIPv6Net = mustCIDR("fd7a:115c:a1e0::/48")
+)
 
 // NewManager 创建进程管理器
 func NewManager(cfg *config.Config) *Manager {
@@ -54,11 +70,24 @@ func NewManager(cfg *config.Config) *Manager {
 
 // Start 启动 OpenClaw 进程
 func (m *Manager) Start() error {
+	if status := m.GetStatus(); status.Running {
+		if status.ManagedExternally {
+			return fmt.Errorf("OpenClaw 网关已由外部进程管理并在运行中")
+		}
+		return fmt.Errorf("OpenClaw 已在运行中 (PID: %d)", status.PID)
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if m.status.Running {
 		return fmt.Errorf("OpenClaw 已在运行中 (PID: %d)", m.status.PID)
+	}
+	if gatewayPort := m.getGatewayPort(); gatewayPort != "" && m.isPortListening(gatewayPort) {
+		if m.detectGatewayListening() {
+			return fmt.Errorf("OpenClaw 网关已由外部进程管理并在运行中")
+		}
+		return fmt.Errorf("OpenClaw 网关端口 %s 已被其他本地服务占用", gatewayPort)
 	}
 
 	// 启动前确保 openclaw.json 配置正确
@@ -98,6 +127,9 @@ func (m *Manager) Start() error {
 		PID:       m.cmd.Process.Pid,
 		StartedAt: time.Now(),
 	}
+	m.daemonized = false
+	m.lastGatewayProbeAt = time.Time{}
+	m.lastGatewayProbeOK = false
 
 	// 合并 stdout 和 stderr
 	m.logReader = io.NopCloser(io.MultiReader(stdout, stderr))
@@ -115,9 +147,16 @@ func buildProcessEnv() []string {
 
 // Stop 停止 OpenClaw 进程
 func (m *Manager) Stop() error {
+	if status := m.GetStatus(); status.ManagedExternally {
+		return fmt.Errorf("OpenClaw 网关当前由外部进程管理，无法在 ClawPanel 内停止")
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if m.daemonized {
+		return fmt.Errorf("OpenClaw 当前以 daemon fork 模式运行，ClawPanel 暂不支持直接停止；请使用网关重启或在外部环境中停止")
+	}
 	if !m.status.Running {
 		return fmt.Errorf("OpenClaw 未在运行")
 	}
@@ -187,6 +226,9 @@ func (m *Manager) Stop() error {
 
 	m.status.Running = false
 	m.status.PID = 0
+	m.status.Daemonized = false
+	m.lastGatewayProbeAt = time.Time{}
+	m.lastGatewayProbeOK = false
 	log.Println("[ProcessMgr] OpenClaw 已停止")
 	return nil
 }
@@ -229,7 +271,17 @@ func (m *Manager) killWindowsPortListeners(port string) int {
 
 // Restart 重启 OpenClaw 进程
 func (m *Manager) Restart() error {
-	if m.GetStatus().Running {
+	status := m.GetStatus()
+	if status.ManagedExternally {
+		return fmt.Errorf("OpenClaw 网关当前由外部进程管理，请在外部环境中重启")
+	}
+	m.mu.RLock()
+	daemonized := m.daemonized
+	m.mu.RUnlock()
+	if daemonized {
+		return fmt.Errorf("OpenClaw 当前以 daemon fork 模式运行，请使用网关重启或在外部环境中重启")
+	}
+	if status.Running {
 		if err := m.Stop(); err != nil {
 			log.Printf("[ProcessMgr] 停止失败: %v", err)
 		}
@@ -238,9 +290,57 @@ func (m *Manager) Restart() error {
 	return m.Start()
 }
 
+// GatewayListening reports whether an OpenClaw control gateway is already
+// reachable on the configured bind targets. The probe requires an HTTP response
+// that looks like the OpenClaw control UI, so unrelated listeners on the same
+// port do not suppress startup.
+func (m *Manager) GatewayListening() bool {
+	return m.gatewayListening(false)
+}
+
+func (m *Manager) gatewayListening(force bool) bool {
+	if !force {
+		m.mu.RLock()
+		cachedAt := m.lastGatewayProbeAt
+		cachedOK := m.lastGatewayProbeOK
+		m.mu.RUnlock()
+		if !cachedAt.IsZero() && time.Since(cachedAt) < gatewayProbeCacheTTL {
+			return cachedOK
+		}
+	}
+
+	ok := m.detectGatewayListening()
+	m.mu.Lock()
+	m.lastGatewayProbeAt = time.Now()
+	m.lastGatewayProbeOK = ok
+	m.mu.Unlock()
+	return ok
+}
+
+func (m *Manager) detectGatewayListening() bool {
+	port, hosts := m.getGatewayProbeTargets()
+	if port == "" {
+		return false
+	}
+	probe := m.gatewayProbe
+	if probe == nil {
+		probe = m.isOpenClawGateway
+	}
+	for _, host := range hosts {
+		if probe(host, port) {
+			return true
+		}
+	}
+	return false
+}
+
 // StopAll 停止所有进程
 func (m *Manager) StopAll() {
-	if m.GetStatus().Running {
+	status := m.GetStatus()
+	if status.ManagedExternally {
+		return
+	}
+	if status.Running {
 		m.Stop()
 	}
 }
@@ -248,11 +348,21 @@ func (m *Manager) StopAll() {
 // GetStatus 获取进程状态
 func (m *Manager) GetStatus() Status {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-
 	s := m.status
+	m.mu.RUnlock()
+
 	if s.Running {
 		s.Uptime = int64(time.Since(s.StartedAt).Seconds())
+		return s
+	}
+	if m.GatewayListening() {
+		s.Running = true
+		s.PID = 0
+		s.StartedAt = time.Time{}
+		s.Uptime = 0
+		s.ExitCode = 0
+		s.Daemonized = false
+		s.ManagedExternally = true
 	}
 	return s
 }
@@ -322,7 +432,11 @@ func (m *Manager) waitForExit() {
 		err := m.cmd.Wait()
 		m.mu.Lock()
 		wasRunning := m.status.Running
+		daemonized := m.daemonized
+		startedAt := m.status.StartedAt
 		m.status.Running = false
+		m.status.Daemonized = false
+		m.daemonized = false
 		exitCode := 0
 		if err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok {
@@ -337,19 +451,23 @@ func (m *Manager) waitForExit() {
 		// process "openclaw-gateway" that holds the port, then the parent
 		// exits (often with code 1). If the gateway port is listening after
 		// the parent exits, the daemon started successfully.
-		if wasRunning && exitCode != 0 {
-			time.Sleep(1 * time.Second) // give the daemon child time to bind
-			gatewayPort := m.getGatewayPort()
-			if gatewayPort != "" && m.isPortListening(gatewayPort) {
-				log.Printf("[ProcessMgr] OpenClaw 父进程已退出但网关守护进程正在端口 %s 运行（daemon fork 模式），视为正常", gatewayPort)
+		if wasRunning && !daemonized && !startedAt.IsZero() && time.Since(startedAt) < 15*time.Second {
+			if m.waitForGatewayReady(8 * time.Second) {
+				log.Printf("[ProcessMgr] OpenClaw 父进程已退出但网关守护进程仍可探测（daemon fork 模式），视为正常")
 				m.mu.Lock()
 				m.status.Running = true
 				m.status.ExitCode = 0
+				m.status.PID = 0
+				m.status.Daemonized = true
+				m.cmd = nil
+				m.daemonized = true
 				m.mu.Unlock()
 				// Monitor the daemon process; when port goes down, restart
-				go m.monitorDaemon(gatewayPort)
+				go m.monitorDaemon()
 				return
 			}
+		}
+		if wasRunning && exitCode != 0 {
 			log.Println("[ProcessMgr] 检测到 OpenClaw 异常退出，3秒后自动重启...")
 			time.Sleep(2 * time.Second)
 			if err := m.Start(); err != nil {
@@ -363,21 +481,7 @@ func (m *Manager) waitForExit() {
 
 // getGatewayPort reads the gateway port from openclaw.json config
 func (m *Manager) getGatewayPort() string {
-	ocDir := m.cfg.OpenClawDir
-	if ocDir == "" {
-		home, _ := os.UserHomeDir()
-		ocDir = filepath.Join(home, ".openclaw")
-	}
-	cfgPath := filepath.Join(ocDir, "openclaw.json")
-	data, err := os.ReadFile(cfgPath)
-	if err != nil {
-		return "18789" // default gateway port
-	}
-	var cfg map[string]interface{}
-	if json.Unmarshal(data, &cfg) != nil {
-		return "18789"
-	}
-	if gw, ok := cfg["gateway"].(map[string]interface{}); ok {
+	if gw := m.readGatewayConfig(); gw != nil {
 		if port, ok := gw["port"].(float64); ok && port > 0 {
 			return fmt.Sprintf("%d", int(port))
 		}
@@ -385,37 +489,292 @@ func (m *Manager) getGatewayPort() string {
 	return "18789"
 }
 
-// isPortListening checks if a TCP port is currently listening
-func (m *Manager) isPortListening(port string) bool {
-	conn, err := net.DialTimeout("tcp", "127.0.0.1:"+port, 2*time.Second)
+func (m *Manager) readGatewayConfig() map[string]interface{} {
+	ocDir := m.cfg.OpenClawDir
+	if ocDir == "" {
+		home, _ := os.UserHomeDir()
+		ocDir = filepath.Join(home, ".openclaw")
+	}
+	if strings.TrimSpace(ocDir) == "" {
+		return nil
+	}
+	cfgPath := filepath.Join(ocDir, "openclaw.json")
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return nil
+	}
+	var cfg map[string]interface{}
+	if json.Unmarshal(data, &cfg) != nil {
+		return nil
+	}
+	if gw, ok := cfg["gateway"].(map[string]interface{}); ok && gw != nil {
+		return gw
+	}
+	return nil
+}
+
+func defaultGatewayLoopbackTargets() []string {
+	return []string{"127.0.0.1", "localhost", "::1"}
+}
+
+func (m *Manager) getGatewayProbeTargets() (string, []string) {
+	port := m.getGatewayPort()
+	bind, custom := m.getGatewayBindSettings()
+	return port, gatewayConfiguredTargets(bind, custom, collectGatewayCandidateTargets(), m.canBindGatewayHost)
+}
+
+func (m *Manager) getGatewayPortCheckTargets() []string {
+	bind, custom := m.getGatewayBindSettings()
+	return gatewayConfiguredTargets(bind, custom, collectGatewayCandidateTargets(), m.canBindGatewayHost)
+}
+
+func (m *Manager) getGatewayBindSettings() (string, string) {
+	gw := m.readGatewayConfig()
+	if gw == nil {
+		return "", ""
+	}
+	bind, _ := gw["bind"].(string)
+	custom, _ := gw["customBindHost"].(string)
+	if strings.TrimSpace(custom) == "" {
+		if legacy, ok := gw["bindAddress"].(string); ok {
+			custom = legacy
+		}
+	}
+	return strings.ToLower(strings.TrimSpace(bind)), custom
+}
+
+func gatewayPortCheckTargets(bind, custom string, allTargets []string) []string {
+	return gatewayConfiguredTargets(bind, custom, allTargets, func(string) bool { return true })
+}
+
+func gatewayConfiguredTargets(bind, custom string, allTargets []string, canBindHost func(host string) bool) []string {
+	loopbacks := defaultGatewayLoopbackTargets()
+	switch strings.ToLower(strings.TrimSpace(bind)) {
+	case "", "auto", "loopback":
+		if canBindAnyLoopback(canBindHost) {
+			return loopbacks
+		}
+		return allTargets
+	case "tailnet":
+		if targets := tailnetGatewayTargets(allTargets); len(targets) > 0 {
+			return targets
+		}
+		if canBindAnyLoopback(canBindHost) {
+			return loopbacks
+		}
+		return allTargets
+	case "lan":
+		return allTargets
+	case "custom":
+		custom = normalizeGatewayProbeHost(custom)
+		if custom == "localhost" {
+			if canBindAnyLoopback(canBindHost) {
+				return loopbacks
+			}
+			return allTargets
+		}
+		if ip := net.ParseIP(custom); ip != nil && ip.IsLoopback() {
+			if canBindHost(custom) {
+				return []string{custom}
+			}
+			return allTargets
+		}
+		if custom != "" {
+			if canBindHost(custom) {
+				return []string{custom}
+			}
+			return allTargets
+		}
+		return allTargets
+	}
+	return loopbacks
+}
+
+func collectGatewayCandidateTargets() []string {
+	targets := defaultGatewayLoopbackTargets()
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return targets
+	}
+	for _, iface := range ifaces {
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			switch v := addr.(type) {
+			case *net.IPNet:
+				targets = appendGatewayProbeTarget(targets, v.IP.String())
+			case *net.IPAddr:
+				targets = appendGatewayProbeTarget(targets, v.IP.String())
+			}
+		}
+	}
+	return targets
+}
+
+func tailnetGatewayTargets(allTargets []string) []string {
+	targets := make([]string, 0, len(allTargets))
+	for _, host := range allTargets {
+		ip := net.ParseIP(host)
+		if ip == nil {
+			continue
+		}
+		if tailnetIPv4Net.Contains(ip) || tailnetIPv6Net.Contains(ip) {
+			targets = appendGatewayProbeTarget(targets, host)
+		}
+	}
+	return targets
+}
+
+func mustCIDR(cidr string) *net.IPNet {
+	_, network, err := net.ParseCIDR(cidr)
+	if err != nil {
+		panic(err)
+	}
+	return network
+}
+
+func canBindAnyLoopback(canBindHost func(host string) bool) bool {
+	if canBindHost == nil {
+		return true
+	}
+	for _, host := range defaultGatewayLoopbackTargets() {
+		if canBindHost(host) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Manager) canBindGatewayHost(host string) bool {
+	if m.bindHostCheck != nil {
+		return m.bindHostCheck(host)
+	}
+	ln, err := net.Listen("tcp", net.JoinHostPort(host, "0"))
 	if err != nil {
 		return false
 	}
-	conn.Close()
+	_ = ln.Close()
 	return true
 }
 
+func appendGatewayProbeTarget(targets []string, host string) []string {
+	host = normalizeGatewayProbeHost(host)
+	if host == "" {
+		return targets
+	}
+	for _, existing := range targets {
+		if existing == host {
+			return targets
+		}
+	}
+	return append(targets, host)
+}
+
+func normalizeGatewayProbeHost(host string) string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return ""
+	}
+	if strings.Contains(host, "://") {
+		if parsed, err := url.Parse(host); err == nil {
+			host = parsed.Hostname()
+		}
+	}
+	if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
+		if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+			host = parsedHost
+		}
+	}
+	host = strings.Trim(host, "[]")
+	ip := net.ParseIP(host)
+	if ip != nil {
+		if ip.IsUnspecified() || ip.IsMulticast() {
+			return ""
+		}
+		return ip.String()
+	}
+	return host
+}
+
+func (m *Manager) isOpenClawGateway(host, port string) bool {
+	client := &http.Client{
+		Timeout:   1500 * time.Millisecond,
+		Transport: &http.Transport{},
+	}
+	u := (&url.URL{
+		Scheme: "http",
+		Host:   net.JoinHostPort(host, port),
+		Path:   "/",
+	}).String()
+	resp, err := client.Get(u)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if err != nil {
+		return false
+	}
+	text := strings.ToLower(string(body))
+	return strings.Contains(text, "openclaw control") || strings.Contains(text, "<openclaw-app")
+}
+
+func (m *Manager) waitForGatewayReady(timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if m.gatewayListening(true) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// isPortListening checks if a TCP port is currently listening
+func (m *Manager) isPortListening(port string) bool {
+	hosts := m.getGatewayPortCheckTargets()
+	for _, host := range hosts {
+		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 300*time.Millisecond)
+		if err != nil {
+			continue
+		}
+		conn.Close()
+		return true
+	}
+	return false
+}
+
 // monitorDaemon monitors the OpenClaw daemon process (fork pattern).
-// When the gateway port stops listening, mark process as stopped and restart.
-func (m *Manager) monitorDaemon(port string) {
+// When the OpenClaw control probe fails repeatedly, mark process as stopped and restart.
+func (m *Manager) monitorDaemon() {
 	failCount := 0
 	for {
 		time.Sleep(5 * time.Second)
 		m.mu.RLock()
 		running := m.status.Running
+		daemonized := m.daemonized
 		m.mu.RUnlock()
-		if !running {
+		if !running || !daemonized {
 			return // manually stopped
 		}
-		if m.isPortListening(port) {
+		if m.gatewayListening(true) {
 			failCount = 0
 			continue
 		}
 		failCount++
-		if failCount >= 2 { // 2 consecutive failures (10s)
-			log.Printf("[ProcessMgr] OpenClaw 守护进程端口 %s 不再监听，尝试重启...", port)
+		if failCount >= 3 { // 3 consecutive failures (15s)
+			log.Printf("[ProcessMgr] OpenClaw 守护进程已不可达，尝试重启...")
 			m.mu.Lock()
 			m.status.Running = false
+			m.status.Daemonized = false
+			m.daemonized = false
+			m.lastGatewayProbeAt = time.Time{}
+			m.lastGatewayProbeOK = false
 			m.mu.Unlock()
 			time.Sleep(2 * time.Second)
 			if err := m.Start(); err != nil {

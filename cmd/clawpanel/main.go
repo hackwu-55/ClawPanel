@@ -99,7 +99,9 @@ func runServer(stopCh chan struct{}) {
 
 	// 自动启动 OpenClaw（如果已安装且配置存在）
 	if cfg.OpenClawConfigExists() {
-		if err := procMgr.Start(); err != nil {
+		if procMgr.GatewayListening() {
+			log.Println("[ClawPanel] 检测到 OpenClaw 网关已在运行，跳过自动启动")
+		} else if err := procMgr.Start(); err != nil {
 			log.Printf("[ClawPanel] OpenClaw 自动启动失败: %v", err)
 		} else {
 			log.Println("[ClawPanel] OpenClaw 已自动启动")
@@ -195,6 +197,8 @@ func runServer(stopCh chan struct{}) {
 			auth.POST("/openclaw/agents", handler.CreateOpenClawAgent(cfg))
 			auth.PUT("/openclaw/agents/:id", handler.UpdateOpenClawAgent(cfg))
 			auth.DELETE("/openclaw/agents/:id", handler.DeleteOpenClawAgent(cfg))
+			auth.GET("/openclaw/agents/:id/core-files", handler.GetOpenClawAgentCoreFiles(cfg))
+			auth.PUT("/openclaw/agents/:id/core-files", handler.SaveOpenClawAgentCoreFile(cfg))
 			auth.GET("/openclaw/bindings", handler.GetOpenClawBindings(cfg))
 			auth.PUT("/openclaw/bindings", handler.SaveOpenClawBindings(cfg))
 			auth.POST("/openclaw/route/preview", handler.PreviewOpenClawRoute(cfg))
@@ -204,6 +208,7 @@ func runServer(stopCh chan struct{}) {
 			auth.PUT("/openclaw/channels/:id", handler.SaveChannel(cfg))
 			auth.PUT("/openclaw/plugins/:id", handler.SavePlugin(cfg))
 			auth.POST("/openclaw/toggle-channel", handler.ToggleChannel(cfg, procMgr, napcatMon, sysLog))
+			auth.POST("/openclaw/feishu-variant", handler.SwitchFeishuVariant(cfg, procMgr, sysLog))
 
 			// 进程管理
 			auth.POST("/process/start", handler.StartProcess(procMgr, sysLog))

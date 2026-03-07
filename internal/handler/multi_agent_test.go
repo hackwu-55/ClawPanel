@@ -243,6 +243,690 @@ func TestGetOpenClawAgentsKeepsExplicitMainNonImplicit(t *testing.T) {
 	}
 }
 
+func newAgentCoreTestEnv(t *testing.T) (string, *config.Config) {
+	t.Helper()
+	dir := t.TempDir()
+	if realDir, err := filepath.EvalSymlinks(dir); err == nil && realDir != "" {
+		dir = realDir
+	}
+	openClawDir := filepath.Join(dir, ".openclaw")
+	if err := os.MkdirAll(openClawDir, 0755); err != nil {
+		t.Fatalf("mkdir openclaw dir: %v", err)
+	}
+	return dir, &config.Config{OpenClawDir: openClawDir}
+}
+
+func writeAgentCoreOpenClawJSON(t *testing.T, cfg *config.Config, payload map[string]interface{}) {
+	t.Helper()
+	writeJSON(t, filepath.Join(cfg.OpenClawDir, "openclaw.json"), payload)
+}
+
+func expectAgentCoreIOStatus(t *testing.T, w *httptest.ResponseRecorder, expected int) bool {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		if w.Code != http.StatusNotImplemented {
+			t.Fatalf("expected 501 on windows, got %d: %s", w.Code, w.Body.String())
+		}
+		var resp struct {
+			OK    bool   `json:"ok"`
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode windows unsupported response: %v", err)
+		}
+		if resp.Error != errAgentCoreFileUnsupportedPlatform.Error() {
+			t.Fatalf("expected unsupported-platform message, got %+v", resp)
+		}
+		return false
+	}
+	if w.Code != expected {
+		t.Fatalf("expected %d, got %d: %s", expected, w.Code, w.Body.String())
+	}
+	return true
+}
+
+func TestGetOpenClawAgentCoreFilesReadsWorkspaceDocs(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	dir, cfg := newAgentCoreTestEnv(t)
+	workspace := filepath.Join(dir, "workspaces", "main")
+	writeAgentCoreOpenClawJSON(t, cfg, map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main", "workspace": workspace},
+			},
+		},
+	})
+	if err := os.MkdirAll(workspace, 0755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("# Agent instructions"), 0644); err != nil {
+		t.Fatalf("write AGENTS.md: %v", err)
+	}
+
+	r := gin.New()
+	r.GET("/openclaw/agents/:id/core-files", GetOpenClawAgentCoreFiles(cfg))
+	req := httptest.NewRequest(http.MethodGet, "/openclaw/agents/main/core-files", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if !expectAgentCoreIOStatus(t, w, http.StatusOK) {
+		return
+	}
+
+	var resp struct {
+		OK        bool   `json:"ok"`
+		Workspace string `json:"workspace"`
+		Files     []struct {
+			Name    string `json:"name"`
+			Exists  bool   `json:"exists"`
+			Content string `json:"content"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !resp.OK {
+		t.Fatalf("expected ok=true")
+	}
+	if resp.Workspace != workspace {
+		t.Fatalf("expected workspace %q, got %q", workspace, resp.Workspace)
+	}
+	if len(resp.Files) != len(agentCoreFileNames) {
+		t.Fatalf("expected %d core files, got %d", len(agentCoreFileNames), len(resp.Files))
+	}
+
+	foundAgents := false
+	foundMemory := false
+	for _, file := range resp.Files {
+		switch file.Name {
+		case "AGENTS.md":
+			foundAgents = true
+			if !file.Exists || !strings.Contains(file.Content, "Agent instructions") {
+				t.Fatalf("expected AGENTS.md content, got %+v", file)
+			}
+		case "MEMORY.md":
+			foundMemory = true
+			if file.Exists {
+				t.Fatalf("expected missing MEMORY.md to be reported as absent")
+			}
+		}
+	}
+	if !foundAgents || !foundMemory {
+		t.Fatalf("expected AGENTS.md and MEMORY.md entries, got %+v", resp.Files)
+	}
+}
+
+func TestGetOpenClawAgentCoreFilesTruncatesOversizedContent(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	dir, cfg := newAgentCoreTestEnv(t)
+	workspace := filepath.Join(dir, "workspaces", "main")
+	writeAgentCoreOpenClawJSON(t, cfg, map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main", "workspace": workspace},
+			},
+		},
+	})
+	if err := os.MkdirAll(workspace, 0755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	oversized := strings.Repeat("a", int(agentCoreFileMaxBytes)+64)
+	if err := os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte(oversized), 0644); err != nil {
+		t.Fatalf("write oversized AGENTS.md: %v", err)
+	}
+
+	r := gin.New()
+	r.GET("/openclaw/agents/:id/core-files", GetOpenClawAgentCoreFiles(cfg))
+	req := httptest.NewRequest(http.MethodGet, "/openclaw/agents/main/core-files", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if !expectAgentCoreIOStatus(t, w, http.StatusOK) {
+		return
+	}
+
+	var resp struct {
+		Files []struct {
+			Name    string `json:"name"`
+			Exists  bool   `json:"exists"`
+			Content string `json:"content"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	for _, file := range resp.Files {
+		if file.Name != "AGENTS.md" {
+			continue
+		}
+		if !file.Exists {
+			t.Fatalf("expected oversized AGENTS.md to exist")
+		}
+		if !strings.Contains(file.Content, "文件过大，已截断") {
+			t.Fatalf("expected truncation marker, got %q", file.Content)
+		}
+		if len(file.Content) <= 0 || int64(len(file.Content)) > agentCoreFileMaxBytes+128 {
+			t.Fatalf("expected bounded truncated content length, got %d", len(file.Content))
+		}
+		return
+	}
+	t.Fatalf("expected AGENTS.md entry in response")
+}
+
+func TestSaveOpenClawAgentCoreFileCreatesWorkspaceDoc(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	dir, cfg := newAgentCoreTestEnv(t)
+	workspace := filepath.Join(dir, "workspaces", "main")
+	writeAgentCoreOpenClawJSON(t, cfg, map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main", "workspace": workspace},
+			},
+		},
+	})
+
+	r := gin.New()
+	r.PUT("/openclaw/agents/:id/core-files", SaveOpenClawAgentCoreFile(cfg))
+	body := []byte(`{"name":"MEMORY.md","content":"# Memory\n\nSaved from test."}`)
+	req := httptest.NewRequest(http.MethodPut, "/openclaw/agents/main/core-files", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if !expectAgentCoreIOStatus(t, w, http.StatusOK) {
+		return
+	}
+
+	saved, err := os.ReadFile(filepath.Join(workspace, "MEMORY.md"))
+	if err != nil {
+		t.Fatalf("read saved file: %v", err)
+	}
+	if !strings.Contains(string(saved), "Saved from test") {
+		t.Fatalf("expected saved content, got %q", string(saved))
+	}
+}
+
+func TestSaveOpenClawAgentCoreFileReplacesExistingDoc(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	dir, cfg := newAgentCoreTestEnv(t)
+	workspace := filepath.Join(dir, "workspaces", "main")
+	writeAgentCoreOpenClawJSON(t, cfg, map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main", "workspace": workspace},
+			},
+		},
+	})
+	if err := os.MkdirAll(workspace, 0755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "MEMORY.md"), []byte("old content"), 0644); err != nil {
+		t.Fatalf("seed MEMORY.md: %v", err)
+	}
+
+	r := gin.New()
+	r.PUT("/openclaw/agents/:id/core-files", SaveOpenClawAgentCoreFile(cfg))
+	body := []byte(`{"name":"MEMORY.md","content":"new content"}`)
+	req := httptest.NewRequest(http.MethodPut, "/openclaw/agents/main/core-files", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if !expectAgentCoreIOStatus(t, w, http.StatusOK) {
+		return
+	}
+	saved, err := os.ReadFile(filepath.Join(workspace, "MEMORY.md"))
+	if err != nil {
+		t.Fatalf("read replaced file: %v", err)
+	}
+	if string(saved) != "new content" {
+		t.Fatalf("expected overwrite, got %q", string(saved))
+	}
+}
+
+func TestGetOpenClawAgentCoreFilesDoesNotFollowSymlink(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	dir, cfg := newAgentCoreTestEnv(t)
+	workspace := filepath.Join(dir, "workspaces", "main")
+	writeAgentCoreOpenClawJSON(t, cfg, map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main", "workspace": workspace},
+			},
+		},
+	})
+	if err := os.MkdirAll(workspace, 0755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	sensitiveFile := filepath.Join(dir, "sensitive.txt")
+	if err := os.WriteFile(sensitiveFile, []byte("top-secret"), 0644); err != nil {
+		t.Fatalf("write sensitive file: %v", err)
+	}
+	if err := os.Symlink(sensitiveFile, filepath.Join(workspace, "AGENTS.md")); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	r := gin.New()
+	r.GET("/openclaw/agents/:id/core-files", GetOpenClawAgentCoreFiles(cfg))
+	req := httptest.NewRequest(http.MethodGet, "/openclaw/agents/main/core-files", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if !expectAgentCoreIOStatus(t, w, http.StatusOK) {
+		return
+	}
+
+	var resp struct {
+		Files []struct {
+			Name    string `json:"name"`
+			Exists  bool   `json:"exists"`
+			Content string `json:"content"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	for _, file := range resp.Files {
+		if file.Name == "AGENTS.md" {
+			if file.Exists || file.Content != "" {
+				t.Fatalf("expected symlinked AGENTS.md to be treated as absent, got %+v", file)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected AGENTS.md entry in response")
+}
+
+func TestSaveOpenClawAgentCoreFileRejectsSymlink(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	dir, cfg := newAgentCoreTestEnv(t)
+	workspace := filepath.Join(dir, "workspaces", "main")
+	writeAgentCoreOpenClawJSON(t, cfg, map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main", "workspace": workspace},
+			},
+		},
+	})
+	if err := os.MkdirAll(workspace, 0755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+	sensitiveFile := filepath.Join(dir, "sensitive.txt")
+	if err := os.WriteFile(sensitiveFile, []byte("top-secret"), 0644); err != nil {
+		t.Fatalf("write sensitive file: %v", err)
+	}
+	target := filepath.Join(workspace, "MEMORY.md")
+	if err := os.Symlink(sensitiveFile, target); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	r := gin.New()
+	r.PUT("/openclaw/agents/:id/core-files", SaveOpenClawAgentCoreFile(cfg))
+	body := []byte(`{"name":"MEMORY.md","content":"overwrite attempt"}`)
+	req := httptest.NewRequest(http.MethodPut, "/openclaw/agents/main/core-files", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if !expectAgentCoreIOStatus(t, w, http.StatusForbidden) {
+		return
+	}
+	saved, err := os.ReadFile(sensitiveFile)
+	if err != nil {
+		t.Fatalf("read sensitive file: %v", err)
+	}
+	if string(saved) != "top-secret" {
+		t.Fatalf("expected sensitive file to remain unchanged, got %q", string(saved))
+	}
+}
+
+func TestGetOpenClawAgentCoreFilesRejectsSymlinkedWorkspace(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	dir, cfg := newAgentCoreTestEnv(t)
+	workspace := filepath.Join(dir, "workspaces", "main")
+	sensitiveDir := filepath.Join(dir, "sensitive")
+	writeAgentCoreOpenClawJSON(t, cfg, map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main", "workspace": workspace},
+			},
+		},
+	})
+	if err := os.MkdirAll(filepath.Dir(workspace), 0755); err != nil {
+		t.Fatalf("mkdir workspaces root: %v", err)
+	}
+	if err := os.MkdirAll(sensitiveDir, 0755); err != nil {
+		t.Fatalf("mkdir sensitive dir: %v", err)
+	}
+	if err := os.Symlink(sensitiveDir, workspace); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	r := gin.New()
+	r.GET("/openclaw/agents/:id/core-files", GetOpenClawAgentCoreFiles(cfg))
+	req := httptest.NewRequest(http.MethodGet, "/openclaw/agents/main/core-files", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSaveOpenClawAgentCoreFileRejectsSymlinkedWorkspace(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	dir, cfg := newAgentCoreTestEnv(t)
+	workspace := filepath.Join(dir, "workspaces", "main")
+	sensitiveDir := filepath.Join(dir, "sensitive")
+	writeAgentCoreOpenClawJSON(t, cfg, map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main", "workspace": workspace},
+			},
+		},
+	})
+	if err := os.MkdirAll(filepath.Dir(workspace), 0755); err != nil {
+		t.Fatalf("mkdir workspaces root: %v", err)
+	}
+	if err := os.MkdirAll(sensitiveDir, 0755); err != nil {
+		t.Fatalf("mkdir sensitive dir: %v", err)
+	}
+	if err := os.Symlink(sensitiveDir, workspace); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	r := gin.New()
+	r.PUT("/openclaw/agents/:id/core-files", SaveOpenClawAgentCoreFile(cfg))
+	body := []byte(`{"name":"MEMORY.md","content":"blocked"}`)
+	req := httptest.NewRequest(http.MethodPut, "/openclaw/agents/main/core-files", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(sensitiveDir, "MEMORY.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected sensitive dir to remain untouched, got err=%v", err)
+	}
+}
+
+func TestSaveOpenClawAgentCoreFileRejectsSymlinkedWorkspaceAncestor(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	dir, cfg := newAgentCoreTestEnv(t)
+	workspace := filepath.Join(dir, "workspaces", "shared", "main")
+	sensitiveDir := filepath.Join(dir, "sensitive")
+	writeAgentCoreOpenClawJSON(t, cfg, map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main", "workspace": workspace},
+			},
+		},
+	})
+	if err := os.MkdirAll(filepath.Join(dir, "workspaces"), 0755); err != nil {
+		t.Fatalf("mkdir workspaces root: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(sensitiveDir, "main"), 0755); err != nil {
+		t.Fatalf("mkdir sensitive workspace: %v", err)
+	}
+	if err := os.Symlink(sensitiveDir, filepath.Join(dir, "workspaces", "shared")); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	r := gin.New()
+	r.PUT("/openclaw/agents/:id/core-files", SaveOpenClawAgentCoreFile(cfg))
+	body := []byte(`{"name":"AGENTS.md","content":"blocked ancestor"}`)
+	req := httptest.NewRequest(http.MethodPut, "/openclaw/agents/main/core-files", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(sensitiveDir, "main", "AGENTS.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected symlink target to remain untouched, got err=%v", err)
+	}
+}
+
+func TestGetOpenClawAgentCoreFilesRejectsSymlinkedWorkspaceAncestor(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	dir, cfg := newAgentCoreTestEnv(t)
+	workspace := filepath.Join(dir, "workspaces", "shared", "main")
+	sensitiveDir := filepath.Join(dir, "sensitive")
+	writeAgentCoreOpenClawJSON(t, cfg, map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main", "workspace": workspace},
+			},
+		},
+	})
+	if err := os.MkdirAll(filepath.Join(dir, "workspaces"), 0755); err != nil {
+		t.Fatalf("mkdir workspaces root: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(sensitiveDir, "main"), 0755); err != nil {
+		t.Fatalf("mkdir sensitive workspace: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sensitiveDir, "main", "AGENTS.md"), []byte("should stay hidden"), 0644); err != nil {
+		t.Fatalf("write sensitive agent file: %v", err)
+	}
+	if err := os.Symlink(sensitiveDir, filepath.Join(dir, "workspaces", "shared")); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	r := gin.New()
+	r.GET("/openclaw/agents/:id/core-files", GetOpenClawAgentCoreFiles(cfg))
+	req := httptest.NewRequest(http.MethodGet, "/openclaw/agents/main/core-files", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestGetOpenClawAgentCoreFilesRejectsWorkspaceOutsideManagedRoots(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	dir, cfg := newAgentCoreTestEnv(t)
+	workspace := filepath.Join(dir, "outside", "main")
+	writeAgentCoreOpenClawJSON(t, cfg, map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main", "workspace": workspace},
+			},
+		},
+	})
+	if err := os.MkdirAll(workspace, 0755); err != nil {
+		t.Fatalf("mkdir outside workspace: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("outside"), 0644); err != nil {
+		t.Fatalf("write outside AGENTS.md: %v", err)
+	}
+
+	r := gin.New()
+	r.GET("/openclaw/agents/:id/core-files", GetOpenClawAgentCoreFiles(cfg))
+	req := httptest.NewRequest(http.MethodGet, "/openclaw/agents/main/core-files", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSaveOpenClawAgentCoreFileRejectsWorkspaceOutsideManagedRoots(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	dir, cfg := newAgentCoreTestEnv(t)
+	workspace := filepath.Join(dir, "outside", "main")
+	writeAgentCoreOpenClawJSON(t, cfg, map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main", "workspace": workspace},
+			},
+		},
+	})
+	if err := os.MkdirAll(workspace, 0755); err != nil {
+		t.Fatalf("mkdir outside workspace: %v", err)
+	}
+
+	r := gin.New()
+	r.PUT("/openclaw/agents/:id/core-files", SaveOpenClawAgentCoreFile(cfg))
+	body := []byte(`{"name":"MEMORY.md","content":"outside"}`)
+	req := httptest.NewRequest(http.MethodPut, "/openclaw/agents/main/core-files", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "MEMORY.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected outside workspace to remain untouched, got err=%v", err)
+	}
+}
+
+func TestSaveOpenClawAgentCoreFileRejectsOversizedContent(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	dir, cfg := newAgentCoreTestEnv(t)
+	workspace := filepath.Join(dir, "workspaces", "main")
+	writeAgentCoreOpenClawJSON(t, cfg, map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main", "workspace": workspace},
+			},
+		},
+	})
+	if err := os.MkdirAll(workspace, 0755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+
+	r := gin.New()
+	r.PUT("/openclaw/agents/:id/core-files", SaveOpenClawAgentCoreFile(cfg))
+	oversized := strings.Repeat("a", int(agentCoreFileMaxBytes)+1)
+	body := []byte(`{"name":"MEMORY.md","content":"` + oversized + `"}`)
+	req := httptest.NewRequest(http.MethodPut, "/openclaw/agents/main/core-files", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "MEMORY.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected oversized save to be rejected, got err=%v", err)
+	}
+}
+
+func TestGetOpenClawAgentCoreFilesRejectsSymlinkedManagedRoot(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	dir, cfg := newAgentCoreTestEnv(t)
+	workspace := filepath.Join(dir, "workspaces", "main")
+	sensitiveRoot := filepath.Join(dir, "sensitive-root")
+	writeAgentCoreOpenClawJSON(t, cfg, map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main", "workspace": workspace},
+			},
+		},
+	})
+	if err := os.MkdirAll(sensitiveRoot, 0755); err != nil {
+		t.Fatalf("mkdir sensitive root: %v", err)
+	}
+	if err := os.Symlink(sensitiveRoot, filepath.Join(dir, "workspaces")); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	r := gin.New()
+	r.GET("/openclaw/agents/:id/core-files", GetOpenClawAgentCoreFiles(cfg))
+	req := httptest.NewRequest(http.MethodGet, "/openclaw/agents/main/core-files", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSaveOpenClawAgentCoreFileRejectsSymlinkedManagedRoot(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	dir, cfg := newAgentCoreTestEnv(t)
+	workspace := filepath.Join(dir, "workspaces", "main")
+	sensitiveRoot := filepath.Join(dir, "sensitive-root")
+	writeAgentCoreOpenClawJSON(t, cfg, map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main", "workspace": workspace},
+			},
+		},
+	})
+	if err := os.MkdirAll(sensitiveRoot, 0755); err != nil {
+		t.Fatalf("mkdir sensitive root: %v", err)
+	}
+	if err := os.Symlink(sensitiveRoot, filepath.Join(dir, "workspaces")); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	r := gin.New()
+	r.PUT("/openclaw/agents/:id/core-files", SaveOpenClawAgentCoreFile(cfg))
+	body := []byte(`{"name":"AGENTS.md","content":"blocked root"}`)
+	req := httptest.NewRequest(http.MethodPut, "/openclaw/agents/main/core-files", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(sensitiveRoot, "main", "AGENTS.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected sensitive root to remain untouched, got err=%v", err)
+	}
+}
+
 func TestLoadDefaultAgentIDPrefersListDefaultFlag(t *testing.T) {
 	t.Parallel()
 
@@ -780,10 +1464,12 @@ func TestDeleteOpenClawAgentRewritesCronTargets(t *testing.T) {
 func TestValidateAgentUniquenessNormalizesPaths(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.Config{OpenClawDir: "/opt/openclaw"}
+	base := t.TempDir()
+	dataDir := filepath.Join(base, "data", "work")
+	cfg := &config.Config{OpenClawDir: base}
 	err := validateAgentUniqueness(cfg, []map[string]interface{}{
-		{"id": "main", "workspace": "/data/work/", "agentDir": "agents/main/"},
-	}, "work", "/data/work", "agents/main", "")
+		{"id": "main", "workspace": dataDir + "/", "agentDir": "agents/main/"},
+	}, "work", dataDir, "agents/main", "")
 	if err == nil {
 		t.Fatalf("expected normalized path conflict")
 	}
@@ -792,7 +1478,8 @@ func TestValidateAgentUniquenessNormalizesPaths(t *testing.T) {
 func TestValidateAgentUniquenessRejectsAgentDirOutsideBase(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.Config{OpenClawDir: "/opt/openclaw"}
+	base := t.TempDir()
+	cfg := &config.Config{OpenClawDir: base}
 	err := validateAgentUniqueness(cfg, []map[string]interface{}{{"id": "main"}}, "work", "workspace/work", "../../tmp/evil", "")
 	if err == nil || !strings.Contains(err.Error(), "agentDir 必须位于 OpenClaw 目录内") {
 		t.Fatalf("expected out-of-base agentDir rejection, got %v", err)
@@ -802,9 +1489,11 @@ func TestValidateAgentUniquenessRejectsAgentDirOutsideBase(t *testing.T) {
 func TestValidateAgentUniquenessRejectsAbsoluteAliasConflict(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.Config{OpenClawDir: "/opt/openclaw"}
+	base := t.TempDir()
+	cfg := &config.Config{OpenClawDir: base}
+	absDir := filepath.Join(base, "custom", "work-agent")
 	err := validateAgentUniqueness(cfg, []map[string]interface{}{
-		{"id": "main", "agentDir": "/opt/openclaw/custom/work-agent"},
+		{"id": "main", "agentDir": absDir},
 	}, "work", "", "custom/work-agent", "")
 	if err == nil {
 		t.Fatalf("expected absolute alias conflict")

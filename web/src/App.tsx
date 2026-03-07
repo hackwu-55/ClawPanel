@@ -34,7 +34,7 @@ export default function App() {
     <>
     <UpdatePopup />
     <Routes>
-      <Route element={<Layout onLogout={auth.logout} napcatStatus={ws.napcatStatus} wechatStatus={ws.wechatStatus} openclawStatus={ws.openclawStatus} wsMessages={ws.wsMessages} />}>
+      <Route element={<Layout onLogout={auth.logout} napcatStatus={ws.napcatStatus} wechatStatus={ws.wechatStatus} openclawStatus={ws.openclawStatus} processStatus={ws.processStatus} wsMessages={ws.wsMessages} />}>
         <Route path="/" element={<Dashboard ws={ws} />} />
         <Route path="/logs" element={<ActivityLog ws={ws} />} />
         <Route path="/channels" element={<OpenClawRequired configured={!!ws.openclawStatus?.configured}><Channels /></OpenClawRequired>} />
