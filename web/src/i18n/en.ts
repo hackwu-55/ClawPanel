@@ -60,6 +60,7 @@ const en: Translations = {
     activityLog: 'Activity Log',
     channels: 'Channels',
     skills: 'Skills',
+    agents: 'Agents',
     cronJobs: 'Cron Jobs',
     workspace: 'Workspace',
     systemConfig: 'System Config',

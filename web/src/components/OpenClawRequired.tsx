@@ -107,7 +107,7 @@ export default function OpenClawRequired({ configured, children }: Props) {
           </div>
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
             <button onClick={handleInstall} disabled={installing}
-              className="inline-flex items-center justify-center gap-2 px-6 py-3 text-sm font-medium rounded-xl bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 transition-all shadow-lg shadow-violet-200 dark:shadow-none">
+              className="page-modern-accent px-6 py-3 text-sm">
               {installing ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
               {installing ? '安装中...' : '一键安装 OpenClaw'}
             </button>
@@ -118,7 +118,7 @@ export default function OpenClawRequired({ configured, children }: Props) {
               关闭提示，继续查看页面
             </button>
           </div>
-          <p className="text-[11px] text-gray-400">安装进度可在左下角「消息中心」实时查看</p>
+          <p className="text-[11px] text-gray-400">安装进度可在右上角铃铛中的消息中心实时查看</p>
         </div>
       </div>
     </div>

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useOutletContext } from 'react-router-dom';
 import {
   Puzzle, Download, Trash2, RefreshCw, Settings2, Power, PowerOff,
   Search, Filter, ChevronRight, ExternalLink, AlertCircle, Check,
@@ -49,6 +50,8 @@ const CATEGORIES = [
 ];
 
 export default function Plugins() {
+  const { uiMode } = (useOutletContext() as { uiMode?: 'modern' }) || {};
+  const modern = uiMode === 'modern';
   const [installed, setInstalled] = useState<InstalledPlugin[]>([]);
   const [registry, setRegistry] = useState<RegistryPlugin[]>([]);
   const [loading, setLoading] = useState(true);
@@ -215,16 +218,16 @@ export default function Plugins() {
   });
 
   return (
-    <div className="space-y-6">
+    <div className={`space-y-6 ${modern ? 'page-modern' : ''}`}>
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className={`${modern ? 'page-modern-header' : 'flex items-center justify-between'}`}>
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-lg shadow-violet-200 dark:shadow-none">
-            <Puzzle className="text-white" size={20} />
+          <div className={`${modern ? 'w-10 h-10 rounded-xl border border-blue-100/80 dark:border-blue-800/40 bg-[linear-gradient(135deg,rgba(37,99,235,0.16),rgba(14,165,233,0.1))] dark:bg-[linear-gradient(135deg,rgba(37,99,235,0.22),rgba(14,165,233,0.14))] flex items-center justify-center shadow-sm' : 'w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-lg shadow-violet-200 dark:shadow-none'}`}>
+            <Puzzle className={`${modern ? 'text-blue-600 dark:text-blue-300' : 'text-white'}`} size={20} />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-gray-900 dark:text-white">插件中心</h1>
-            <p className="text-xs text-gray-500 mt-0.5">
+            <h1 className={`${modern ? 'page-modern-title text-xl' : 'text-xl font-bold text-gray-900 dark:text-white'}`}>插件中心</h1>
+            <p className={`${modern ? 'page-modern-subtitle text-xs mt-0.5' : 'text-xs text-gray-500 mt-0.5'}`}>
               已安装 {installed.length} 个插件 · 仓库共 {registry.length} 个可用
             </p>
           </div>
@@ -233,14 +236,14 @@ export default function Plugins() {
           <button
             onClick={handleRefreshRegistry}
             disabled={refreshing}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg bg-violet-50 text-violet-600 hover:bg-violet-100 dark:bg-violet-900/30 dark:text-violet-300 dark:hover:bg-violet-900/50 transition-colors disabled:opacity-50"
+            className={`${modern ? 'page-modern-action text-violet-600 dark:text-violet-300' : 'flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg bg-violet-50 text-violet-600 hover:bg-violet-100 dark:bg-violet-900/30 dark:text-violet-300 dark:hover:bg-violet-900/50 transition-colors disabled:opacity-50'}`}
           >
             <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
             刷新仓库
           </button>
           <button
             onClick={() => setShowCustomInstall(true)}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 transition-colors"
+            className={`${modern ? 'page-modern-action' : 'flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 transition-colors'}`}
           >
             <Download size={14} />
             自定义安装
@@ -262,13 +265,13 @@ export default function Plugins() {
 
       {/* Tabs + Search */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-        <div className="flex bg-gray-100 dark:bg-gray-800 rounded-lg p-0.5">
+        <div className={`${modern ? 'inline-flex flex-wrap rounded-xl p-1 border border-blue-100/70 bg-[linear-gradient(145deg,rgba(255,255,255,0.78),rgba(239,246,255,0.62))] dark:bg-[linear-gradient(145deg,rgba(10,20,36,0.82),rgba(30,64,175,0.1))] dark:border-blue-800/20 shadow-sm backdrop-blur-xl' : 'flex bg-gray-100 dark:bg-gray-800 rounded-lg p-0.5'}`}>
           <button
             onClick={() => setTab('market')}
-            className={`px-4 py-2 text-xs font-medium rounded-md transition-all ${
+            className={`${modern ? 'px-4 py-2 text-xs font-medium rounded-lg transition-all border' : 'px-4 py-2 text-xs font-medium rounded-md transition-all'} ${
               tab === 'market'
-                ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
-                : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                ? (modern ? 'border-blue-100/80 bg-blue-50/85 dark:bg-blue-900/20 dark:border-blue-800/40 text-blue-700 dark:text-blue-300 shadow-sm' : 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm')
+                : (modern ? 'border-transparent text-gray-500 hover:bg-white/70 dark:hover:bg-slate-800/70 hover:text-gray-700 dark:hover:text-gray-300' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300')
             }`}
           >
             <Globe size={14} className="inline mr-1.5" />
@@ -276,10 +279,10 @@ export default function Plugins() {
           </button>
           <button
             onClick={() => setTab('installed')}
-            className={`px-4 py-2 text-xs font-medium rounded-md transition-all ${
+            className={`${modern ? 'px-4 py-2 text-xs font-medium rounded-lg transition-all border' : 'px-4 py-2 text-xs font-medium rounded-md transition-all'} ${
               tab === 'installed'
-                ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
-                : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                ? (modern ? 'border-blue-100/80 bg-blue-50/85 dark:bg-blue-900/20 dark:border-blue-800/40 text-blue-700 dark:text-blue-300 shadow-sm' : 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm')
+                : (modern ? 'border-transparent text-gray-500 hover:bg-white/70 dark:hover:bg-slate-800/70 hover:text-gray-700 dark:hover:text-gray-300' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300')
             }`}
           >
             <Package size={14} className="inline mr-1.5" />
@@ -294,7 +297,7 @@ export default function Plugins() {
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="搜索插件..."
-              className="w-full pl-9 pr-3 py-2 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none"
+              className="w-full pl-9 pr-3 py-2 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
             />
           </div>
 
@@ -304,12 +307,12 @@ export default function Plugins() {
                 <button
                   key={cat.key}
                   onClick={() => setCategory(cat.key)}
-                  className={`px-2.5 py-1.5 text-[11px] font-medium rounded-md transition-all ${
-                    category === cat.key
-                      ? 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300'
-                      : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'
-                  }`}
-                >
+                    className={`${modern ? 'px-2.5 py-1.5 text-[11px] font-medium rounded-lg transition-all border' : 'px-2.5 py-1.5 text-[11px] font-medium rounded-md transition-all'} ${
+                      category === cat.key
+                        ? (modern ? 'bg-blue-50/85 border-blue-100/80 text-blue-700 dark:bg-blue-900/20 dark:border-blue-800/40 dark:text-blue-300' : 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300')
+                        : (modern ? 'border-transparent text-gray-500 hover:bg-white/70 dark:hover:bg-slate-800/70' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800')
+                    }`}
+                  >
                   {cat.label}
                 </button>
               ))}
@@ -337,9 +340,10 @@ export default function Plugins() {
           ) : filteredRegistry.map(p => {
             const isInstalled = installedIds.has(p.id);
             return (
-              <div key={p.id} className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-4 hover:shadow-md transition-shadow">
+              <div key={p.id} className={`${modern ? 'relative overflow-hidden rounded-[24px] border border-white/65 dark:border-slate-700/50 bg-[linear-gradient(145deg,rgba(255,255,255,0.84),rgba(239,246,255,0.62))] dark:bg-[linear-gradient(145deg,rgba(15,23,42,0.88),rgba(30,64,175,0.10))] p-4 hover:shadow-md transition-all shadow-[0_18px_40px_rgba(15,23,42,0.06)] backdrop-blur-xl' : 'bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-4 hover:shadow-md transition-shadow'}`}>
+                {modern && <div className="pointer-events-none absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-white/90 to-transparent dark:via-slate-200/20" />}
                 <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-100 to-violet-100 dark:from-blue-900/30 dark:to-violet-900/30 flex items-center justify-center text-violet-600 dark:text-violet-400 shrink-0">
+                  <div className={`${modern ? 'w-10 h-10 rounded-xl border border-blue-100/80 dark:border-blue-800/30 bg-[linear-gradient(135deg,rgba(37,99,235,0.12),rgba(14,165,233,0.08))] dark:bg-[linear-gradient(135deg,rgba(37,99,235,0.2),rgba(14,165,233,0.12))] flex items-center justify-center text-blue-600 dark:text-blue-300 shrink-0 shadow-sm' : 'w-10 h-10 rounded-lg bg-gradient-to-br from-blue-100 to-violet-100 dark:from-blue-900/30 dark:to-violet-900/30 flex items-center justify-center text-violet-600 dark:text-violet-400 shrink-0'}`}>
                     <Puzzle size={20} />
                   </div>
                   <div className="min-w-0 flex-1">
@@ -364,14 +368,14 @@ export default function Plugins() {
                     <button
                       onClick={() => handleInstall(p.id)}
                       disabled={installing === p.id}
-                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition-colors disabled:opacity-50"
+                      className={`${modern ? 'page-modern-accent px-3 py-1.5 text-xs' : 'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition-colors disabled:opacity-50'}`}
                     >
                       {installing === p.id ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
                       {installing === p.id ? '安装中...' : '安装'}
                     </button>
                   )}
                   {p.homepage && (
-                    <a href={p.homepage} target="_blank" rel="noopener" className="flex items-center gap-1 text-xs text-gray-400 hover:text-violet-500 transition-colors ml-auto">
+                    <a href={p.homepage} target="_blank" rel="noopener" className={`${modern ? 'page-modern-action ml-auto px-2.5 py-1.5 text-xs' : 'flex items-center gap-1 text-xs text-gray-400 hover:text-violet-500 transition-colors ml-auto'}`}>
                       <ExternalLink size={13} /> 主页
                     </a>
                   )}
@@ -394,7 +398,8 @@ export default function Plugins() {
               </button>
             </div>
           ) : filteredInstalled.map(p => (
-            <div key={p.id} className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-4">
+            <div key={p.id} className={`${modern ? 'relative overflow-hidden rounded-[24px] border border-white/65 dark:border-slate-700/50 bg-[linear-gradient(145deg,rgba(255,255,255,0.84),rgba(239,246,255,0.62))] dark:bg-[linear-gradient(145deg,rgba(15,23,42,0.88),rgba(30,64,175,0.10))] p-4 shadow-[0_18px_40px_rgba(15,23,42,0.06)] backdrop-blur-xl' : 'bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-4'}`}>
+              {modern && <div className="pointer-events-none absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-white/90 to-transparent dark:via-slate-200/20" />}
               <div className="flex items-center gap-4">
                 <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
                   p.enabled
@@ -425,25 +430,25 @@ export default function Plugins() {
                 <div className="flex items-center gap-1.5">
                   <button
                     onClick={() => handleToggle(p.id, !p.enabled)}
-                    className={`p-2 rounded-lg transition-colors ${
+                    className={`${modern ? (p.enabled ? 'page-modern-success p-2' : 'page-modern-action p-2') : `p-2 rounded-lg transition-colors ${
                       p.enabled
                         ? 'text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/20'
                         : 'text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
-                    }`}
+                    }`}`}
                     title={p.enabled ? '禁用' : '启用'}
                   >
                     {p.enabled ? <Power size={16} /> : <PowerOff size={16} />}
                   </button>
                   <button
                     onClick={() => openConfig(p.id)}
-                    className="p-2 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-300 transition-colors"
+                    className={`${modern ? 'page-modern-action p-2' : 'p-2 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-300 transition-colors'}`}
                     title="配置"
                   >
                     <Settings2 size={16} />
                   </button>
                   <button
                     onClick={() => openLogs(p.id)}
-                    className="p-2 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-300 transition-colors"
+                    className={`${modern ? 'page-modern-action p-2' : 'p-2 rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-300 transition-colors'}`}
                     title="日志"
                   >
                     <Terminal size={16} />
@@ -451,14 +456,14 @@ export default function Plugins() {
                   <button
                     onClick={() => handleUpdate(p.id)}
                     disabled={installing === p.id}
-                    className="p-2 rounded-lg text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors disabled:opacity-50"
+                    className={`${modern ? 'page-modern-accent p-2' : 'p-2 rounded-lg text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors disabled:opacity-50'}`}
                     title="更新"
                   >
                     {installing === p.id ? <Loader2 size={16} className="animate-spin" /> : <ArrowUpCircle size={16} />}
                   </button>
                   <button
                     onClick={() => handleUninstall(p.id)}
-                    className="p-2 rounded-lg text-red-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 transition-colors"
+                    className={`${modern ? 'page-modern-danger p-2' : 'p-2 rounded-lg text-red-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 transition-colors'}`}
                     title="卸载"
                   >
                     <Trash2 size={16} />
@@ -473,20 +478,20 @@ export default function Plugins() {
       {/* Custom Install Modal */}
       {showCustomInstall && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowCustomInstall(false)}>
-          <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4" onClick={e => e.stopPropagation()}>
+          <div className={`${modern ? 'bg-[linear-gradient(145deg,rgba(255,255,255,0.92),rgba(239,246,255,0.72))] dark:bg-[linear-gradient(145deg,rgba(12,24,42,0.92),rgba(30,64,175,0.14))] rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4 border border-blue-100/70 dark:border-blue-800/20 backdrop-blur-xl' : 'bg-white dark:bg-gray-900 rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4'}`} onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <h3 className="font-semibold text-gray-900 dark:text-white">自定义安装插件</h3>
-              <button onClick={() => setShowCustomInstall(false)} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+              <button onClick={() => setShowCustomInstall(false)} className={`${modern ? 'page-modern-action p-1.5' : 'text-gray-400 hover:text-gray-600'}`}><X size={18} /></button>
             </div>
             <p className="text-xs text-gray-500">输入插件 Git 仓库 URL 或下载链接进行安装</p>
             <input
               value={customUrl}
               onChange={e => setCustomUrl(e.target.value)}
               placeholder="https://github.com/user/plugin.git 或 .zip URL"
-              className="w-full px-3 py-2.5 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none"
+              className="w-full px-3 py-2.5 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
             />
             <div className="flex justify-end gap-2">
-              <button onClick={() => setShowCustomInstall(false)} className="px-4 py-2 text-xs font-medium rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800">取消</button>
+              <button onClick={() => setShowCustomInstall(false)} className={`${modern ? 'page-modern-action px-4 py-2 text-xs' : 'px-4 py-2 text-xs font-medium rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'}`}>取消</button>
               <button
                 onClick={() => {
                   if (!customUrl.trim()) return;
@@ -496,7 +501,7 @@ export default function Plugins() {
                   setCustomUrl('');
                 }}
                 disabled={!customUrl.trim()}
-                className="px-4 py-2 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50"
+                className={`${modern ? 'page-modern-accent px-4 py-2 text-xs' : 'px-4 py-2 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50'}`}
               >
                 安装
               </button>
@@ -508,10 +513,10 @@ export default function Plugins() {
       {/* Config Modal */}
       {configPlugin && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setConfigPlugin(null)}>
-          <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl w-full max-w-lg p-6 space-y-4 max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+          <div className={`${modern ? 'bg-[linear-gradient(145deg,rgba(255,255,255,0.92),rgba(239,246,255,0.72))] dark:bg-[linear-gradient(145deg,rgba(12,24,42,0.92),rgba(30,64,175,0.14))] rounded-2xl shadow-xl w-full max-w-lg p-6 space-y-4 max-h-[80vh] overflow-y-auto border border-blue-100/70 dark:border-blue-800/20 backdrop-blur-xl' : 'bg-white dark:bg-gray-900 rounded-2xl shadow-xl w-full max-w-lg p-6 space-y-4 max-h-[80vh] overflow-y-auto'}`} onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <h3 className="font-semibold text-gray-900 dark:text-white">插件配置 - {configPlugin}</h3>
-              <button onClick={() => setConfigPlugin(null)} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+              <button onClick={() => setConfigPlugin(null)} className={`${modern ? 'page-modern-action p-1.5' : 'text-gray-400 hover:text-gray-600'}`}><X size={18} /></button>
             </div>
 
             {configSchema ? (
@@ -523,14 +528,14 @@ export default function Plugins() {
                   value={JSON.stringify(configData, null, 2)}
                   onChange={e => { try { setConfigData(JSON.parse(e.target.value)); } catch {} }}
                   rows={12}
-                  className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 outline-none"
+                  className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none"
                 />
               </div>
             )}
 
             <div className="flex justify-end gap-2 pt-2">
-              <button onClick={() => setConfigPlugin(null)} className="px-4 py-2 text-xs font-medium rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800">取消</button>
-              <button onClick={saveConfig} className="px-4 py-2 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700">保存配置</button>
+              <button onClick={() => setConfigPlugin(null)} className={`${modern ? 'page-modern-action px-4 py-2 text-xs' : 'px-4 py-2 text-xs font-medium rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'}`}>取消</button>
+              <button onClick={saveConfig} className={`${modern ? 'page-modern-accent px-4 py-2 text-xs' : 'px-4 py-2 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700'}`}>保存配置</button>
             </div>
           </div>
         </div>
@@ -539,12 +544,12 @@ export default function Plugins() {
       {/* Logs Modal */}
       {logsPlugin && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setLogsPlugin(null)}>
-          <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl w-full max-w-2xl p-6 space-y-4 max-h-[80vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+          <div className={`${modern ? 'bg-[linear-gradient(145deg,rgba(255,255,255,0.92),rgba(239,246,255,0.72))] dark:bg-[linear-gradient(145deg,rgba(12,24,42,0.92),rgba(30,64,175,0.14))] rounded-2xl shadow-xl w-full max-w-2xl p-6 space-y-4 max-h-[80vh] overflow-hidden flex flex-col border border-blue-100/70 dark:border-blue-800/20 backdrop-blur-xl' : 'bg-white dark:bg-gray-900 rounded-2xl shadow-xl w-full max-w-2xl p-6 space-y-4 max-h-[80vh] overflow-hidden flex flex-col'}`} onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <h3 className="font-semibold text-gray-900 dark:text-white flex items-center gap-2">
                 <Terminal size={16} /> 插件日志 - {logsPlugin}
               </h3>
-              <button onClick={() => setLogsPlugin(null)} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+              <button onClick={() => setLogsPlugin(null)} className={`${modern ? 'page-modern-action p-1.5' : 'text-gray-400 hover:text-gray-600'}`}><X size={18} /></button>
             </div>
             <div className="flex-1 overflow-y-auto bg-gray-950 rounded-lg p-4 font-mono text-xs text-green-400 min-h-[200px]">
               {logs.length === 0 ? (
@@ -594,7 +599,7 @@ function DynamicConfigForm({ schema, data, onChange }: { schema: any; data: Reco
                   type="checkbox"
                   checked={!!val}
                   onChange={e => setField(key, e.target.checked)}
-                  className="rounded border-gray-300 text-violet-600 focus:ring-violet-500"
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
                 <span className="text-xs text-gray-600 dark:text-gray-400">{prop.description || ''}</span>
               </label>
@@ -604,13 +609,13 @@ function DynamicConfigForm({ schema, data, onChange }: { schema: any; data: Reco
                 value={val ?? ''}
                 onChange={e => setField(key, e.target.value ? Number(e.target.value) : undefined)}
                 placeholder={prop.default?.toString()}
-                className="w-full px-3 py-2 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 focus:ring-2 focus:ring-violet-500/20 outline-none"
+                className="w-full px-3 py-2 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 focus:ring-2 focus:ring-blue-500/20 outline-none"
               />
             ) : prop.enum ? (
               <select
                 value={val ?? ''}
                 onChange={e => setField(key, e.target.value)}
-                className="w-full px-3 py-2 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 focus:ring-2 focus:ring-violet-500/20 outline-none"
+                className="w-full px-3 py-2 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 focus:ring-2 focus:ring-blue-500/20 outline-none"
               >
                 <option value="">-- 选择 --</option>
                 {prop.enum.map((v: string) => <option key={v} value={v}>{v}</option>)}
@@ -621,7 +626,7 @@ function DynamicConfigForm({ schema, data, onChange }: { schema: any; data: Reco
                 value={val ?? ''}
                 onChange={e => setField(key, e.target.value)}
                 placeholder={prop.default?.toString() || ''}
-                className="w-full px-3 py-2 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 focus:ring-2 focus:ring-violet-500/20 outline-none"
+                className="w-full px-3 py-2 text-xs rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 focus:ring-2 focus:ring-blue-500/20 outline-none"
               />
             )}
             {prop.description && prop.type !== 'boolean' && (

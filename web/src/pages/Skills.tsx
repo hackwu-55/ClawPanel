@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useOutletContext } from 'react-router-dom';
 import { api } from '../lib/api';
 import {
   Sparkles, Search, ToggleLeft, ToggleRight, Download,
@@ -48,6 +49,8 @@ const CLAWHUB_CATALOG: { id: string; name: string; description: string; descript
 
 export default function Skills() {
   const { t } = useI18n();
+  const { uiMode } = (useOutletContext() as { uiMode?: 'modern' }) || {};
+  const modern = uiMode === 'modern';
   const [skills, setSkills] = useState<SkillEntry[]>([]);
   const [plugins, setPlugins] = useState<PluginEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -157,31 +160,31 @@ export default function Skills() {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className={`space-y-6 ${modern ? 'page-modern' : ''}`}>
+      <div className={`${modern ? 'page-modern-header' : 'flex items-center justify-between'}`}>
         <div>
-          <h2 className="text-xl font-bold text-gray-900 dark:text-white tracking-tight">{t.skills.title}</h2>
-          <p className="text-sm text-gray-500 mt-1">{t.skills.subtitle}</p>
+          <h2 className={`${modern ? 'page-modern-title' : 'text-xl font-bold text-gray-900 dark:text-white tracking-tight'}`}>{t.skills.title}</h2>
+          <p className={`${modern ? 'page-modern-subtitle' : 'text-sm text-gray-500 mt-1'}`}>{t.skills.subtitle}</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={loadSkills} className="flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors shadow-sm">
+          <button onClick={loadSkills} className={`${modern ? 'page-modern-action' : 'flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors shadow-sm'}`}>
             <RefreshCw size={14} />{t.skills.refreshList}
           </button>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-6 border-b border-gray-200 dark:border-gray-800">
+      <div className={`${modern ? 'inline-flex flex-wrap gap-2 p-1 rounded-2xl border border-blue-100/70 bg-[linear-gradient(145deg,rgba(255,255,255,0.78),rgba(239,246,255,0.62))] dark:bg-[linear-gradient(145deg,rgba(10,20,36,0.82),rgba(30,64,175,0.1))] dark:border-blue-800/20 shadow-sm backdrop-blur-xl' : 'flex gap-6 border-b border-gray-200 dark:border-gray-800'}`}>
         <button onClick={() => setTab('skills')}
-          className={`pb-3 text-sm font-medium border-b-2 transition-all flex items-center gap-2 ${tab === 'skills' ? 'border-violet-600 text-violet-700 dark:text-violet-400' : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}>
+          className={`${modern ? 'px-3.5 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 border' : 'pb-3 text-sm font-medium border-b-2 transition-all flex items-center gap-2'} ${tab === 'skills' ? (modern ? 'border-blue-100/80 bg-blue-50/85 dark:bg-blue-900/20 dark:border-blue-800/40 text-blue-700 dark:text-blue-300 shadow-sm' : 'border-violet-600 text-violet-700 dark:text-violet-400') : (modern ? 'border-transparent text-gray-500 hover:bg-white/70 dark:hover:bg-slate-800/70 hover:text-gray-700 dark:hover:text-gray-300' : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300')}`}>
           <Sparkles size={16} />{t.skills.installedTab} <span className="bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-xs px-1.5 py-0.5 rounded-full">{skills.length}</span>
         </button>
         <button onClick={() => setTab('plugins')}
-          className={`pb-3 text-sm font-medium border-b-2 transition-all flex items-center gap-2 ${tab === 'plugins' ? 'border-violet-600 text-violet-700 dark:text-violet-400' : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}>
+          className={`${modern ? 'px-3.5 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 border' : 'pb-3 text-sm font-medium border-b-2 transition-all flex items-center gap-2'} ${tab === 'plugins' ? (modern ? 'border-blue-100/80 bg-blue-50/85 dark:bg-blue-900/20 dark:border-blue-800/40 text-blue-700 dark:text-blue-300 shadow-sm' : 'border-violet-600 text-violet-700 dark:text-violet-400') : (modern ? 'border-transparent text-gray-500 hover:bg-white/70 dark:hover:bg-slate-800/70 hover:text-gray-700 dark:hover:text-gray-300' : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300')}`}>
           <Plug size={16} />{t.skills.pluginsTab || '插件'} <span className="bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-xs px-1.5 py-0.5 rounded-full">{plugins.length}</span>
         </button>
         <button onClick={() => setTab('clawhub')}
-          className={`pb-3 text-sm font-medium border-b-2 transition-all flex items-center gap-2 ${tab === 'clawhub' ? 'border-violet-600 text-violet-700 dark:text-violet-400' : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}>
+          className={`${modern ? 'px-3.5 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 border' : 'pb-3 text-sm font-medium border-b-2 transition-all flex items-center gap-2'} ${tab === 'clawhub' ? (modern ? 'border-blue-100/80 bg-blue-50/85 dark:bg-blue-900/20 dark:border-blue-800/40 text-blue-700 dark:text-blue-300 shadow-sm' : 'border-violet-600 text-violet-700 dark:text-violet-400') : (modern ? 'border-transparent text-gray-500 hover:bg-white/70 dark:hover:bg-slate-800/70 hover:text-gray-700 dark:hover:text-gray-300' : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300')}`}>
           <Globe size={16} />{t.skills.clawHubTab} <span className="bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-xs px-1.5 py-0.5 rounded-full">{CLAWHUB_CATALOG.length}</span>
         </button>
       </div>
@@ -202,10 +205,10 @@ export default function Skills() {
               <input value={search} onChange={e => setSearch(e.target.value)} placeholder={t.skills.searchInstalled}
                 className="w-full pl-9 pr-4 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all" />
             </div>
-            <div className="flex gap-1 bg-gray-100 dark:bg-gray-800 p-1 rounded-lg">
+            <div className={`${modern ? 'flex gap-1 p-1 rounded-xl border border-blue-100/70 bg-[linear-gradient(145deg,rgba(255,255,255,0.72),rgba(239,246,255,0.56))] dark:bg-[linear-gradient(145deg,rgba(10,20,36,0.82),rgba(30,64,175,0.08))] dark:border-blue-800/20 backdrop-blur-xl' : 'flex gap-1 bg-gray-100 dark:bg-gray-800 p-1 rounded-lg'}`}>
               {(['all', 'enabled', 'disabled'] as const).map(f => (
                 <button key={f} onClick={() => setFilter(f)}
-                  className={`px-3 py-1.5 text-xs rounded-md transition-all font-medium ${filter === f ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}>
+                  className={`px-3 py-1.5 text-xs rounded-lg transition-all font-medium border ${filter === f ? (modern ? 'border-blue-100/80 bg-blue-50/80 dark:bg-blue-900/20 dark:border-blue-800/40 text-blue-700 dark:text-blue-300 shadow-sm' : 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm') : (modern ? 'border-transparent text-gray-500 hover:bg-white/70 dark:hover:bg-slate-800/70 hover:text-gray-700 dark:hover:text-gray-300' : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300')}`}>
                   {f === 'all' ? t.skills.allFilter : f === 'enabled' ? t.skills.enabledFilter : t.skills.disabledFilter}
                 </button>
               ))}
@@ -226,10 +229,11 @@ export default function Skills() {
           ) : (
             <div className="grid gap-3 overflow-hidden">
               {filtered.map(skill => (
-                <div key={skill.id} className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-700/50 hover:shadow-md transition-all group overflow-hidden">
+                <div key={skill.id} className={`${modern ? 'relative overflow-hidden rounded-[24px] p-4 border border-white/65 dark:border-slate-700/50 bg-[linear-gradient(145deg,rgba(255,255,255,0.84),rgba(239,246,255,0.62))] dark:bg-[linear-gradient(145deg,rgba(15,23,42,0.88),rgba(30,64,175,0.10))] shadow-[0_18px_40px_rgba(15,23,42,0.06)] backdrop-blur-xl' : 'bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-700/50'} hover:shadow-md transition-all group overflow-hidden`}>
+                  {modern && <div className="pointer-events-none absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-white/90 to-transparent dark:via-slate-200/20" />}
                   <div className="flex items-center gap-3 min-w-0">
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-sm ${skill.enabled ? 'bg-gradient-to-br from-violet-500 to-indigo-600' : 'bg-gray-100 dark:bg-gray-700'}`}>
-                      <Sparkles size={18} className={skill.enabled ? 'text-white' : 'text-gray-400'} />
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-sm border ${skill.enabled ? 'bg-[linear-gradient(135deg,rgba(37,99,235,0.18),rgba(14,165,233,0.12))] border-blue-100/80 dark:border-blue-800/40 text-blue-600' : 'bg-gray-100 dark:bg-gray-700 border-transparent'}`}>
+                      <Sparkles size={18} className={skill.enabled ? 'text-blue-600 dark:text-blue-300' : 'text-gray-400'} />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -274,10 +278,11 @@ export default function Skills() {
           ) : (
             <div className="grid gap-3">
               {plugins.map(plugin => (
-                <div key={plugin.id} className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-700/50 hover:shadow-md transition-all group">
+                <div key={plugin.id} className={`${modern ? 'relative overflow-hidden rounded-[24px] p-4 border border-white/65 dark:border-slate-700/50 bg-[linear-gradient(145deg,rgba(255,255,255,0.84),rgba(239,246,255,0.62))] dark:bg-[linear-gradient(145deg,rgba(15,23,42,0.88),rgba(30,64,175,0.10))] shadow-[0_18px_40px_rgba(15,23,42,0.06)] backdrop-blur-xl' : 'bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-700/50'} hover:shadow-md transition-all group`}>
+                  {modern && <div className="pointer-events-none absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-white/90 to-transparent dark:via-slate-200/20" />}
                   <div className="flex items-center gap-3">
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-sm ${plugin.enabled ? 'bg-gradient-to-br from-blue-500 to-cyan-600' : 'bg-gray-100 dark:bg-gray-700'}`}>
-                      <Plug size={18} className={plugin.enabled ? 'text-white' : 'text-gray-400'} />
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-sm border ${plugin.enabled ? 'bg-[linear-gradient(135deg,rgba(37,99,235,0.18),rgba(14,165,233,0.12))] border-blue-100/80 dark:border-blue-800/40' : 'bg-gray-100 dark:bg-gray-700 border-transparent'}`}>
+                      <Plug size={18} className={plugin.enabled ? 'text-blue-600 dark:text-blue-300' : 'text-gray-400'} />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -304,10 +309,11 @@ export default function Skills() {
 
       {tab === 'clawhub' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between gap-4 bg-gradient-to-r from-violet-50 to-indigo-50 dark:from-violet-900/20 dark:to-indigo-900/20 p-4 rounded-xl border border-violet-100 dark:border-violet-800/30">
+          <div className={`${modern ? 'relative overflow-hidden flex items-center justify-between gap-4 p-4 rounded-[24px] border border-white/65 dark:border-slate-700/50 bg-[linear-gradient(145deg,rgba(255,255,255,0.84),rgba(239,246,255,0.62))] dark:bg-[linear-gradient(145deg,rgba(15,23,42,0.88),rgba(30,64,175,0.10))] shadow-[0_18px_40px_rgba(15,23,42,0.06)] backdrop-blur-xl' : 'flex items-center justify-between gap-4 bg-gradient-to-r from-violet-50 to-indigo-50 dark:from-violet-900/20 dark:to-indigo-900/20 p-4 rounded-xl border border-violet-100 dark:border-violet-800/30'}`}>
+            {modern && <div className="pointer-events-none absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-white/90 to-transparent dark:via-slate-200/20" />}
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-white dark:bg-gray-800 rounded-lg shadow-sm">
-                <Globe size={20} className="text-violet-600" />
+              <div className={`${modern ? 'p-2 rounded-xl border border-blue-100/80 dark:border-blue-800/40 bg-[linear-gradient(135deg,rgba(37,99,235,0.12),rgba(14,165,233,0.08))] dark:bg-[linear-gradient(135deg,rgba(37,99,235,0.2),rgba(14,165,233,0.12))] shadow-sm' : 'p-2 bg-white dark:bg-gray-800 rounded-lg shadow-sm'}`}>
+                <Globe size={20} className="text-blue-600 dark:text-blue-300" />
               </div>
               <div>
                 <h3 className="text-sm font-bold text-gray-900 dark:text-white">{t.skills.clawHubTitle}</h3>
@@ -316,12 +322,12 @@ export default function Skills() {
             </div>
             <div className="flex gap-2">
               <button onClick={handleSyncClawHub} disabled={syncing}
-                className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 shadow-sm transition-colors">
+                className={`${modern ? 'page-modern-action' : 'flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 shadow-sm transition-colors'}`}>
                 {syncing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                 {syncing ? t.skills.syncing : t.skills.syncStore}
               </button>
               <a href="https://clawhub.ai/skills?sort=downloads" target="_blank" rel="noopener noreferrer"
-                className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 shadow-sm shadow-violet-200 dark:shadow-none transition-colors">
+                className={`${modern ? 'page-modern-accent' : 'flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 shadow-sm shadow-violet-200 dark:shadow-none transition-colors'}`}>
                 <ExternalLink size={14} />{t.skills.visitSite}
               </a>
             </div>
@@ -342,12 +348,13 @@ export default function Skills() {
             ) : hubFiltered.map(skill => {
               const isInstalled = installedIds.has(skill.id);
               return (
-                <div key={skill.id} className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-700/50 flex flex-col h-full hover:shadow-md transition-all group">
+                <div key={skill.id} className={`${modern ? 'relative overflow-hidden rounded-[24px] p-4 border border-white/65 dark:border-slate-700/50 bg-[linear-gradient(145deg,rgba(255,255,255,0.84),rgba(239,246,255,0.62))] dark:bg-[linear-gradient(145deg,rgba(15,23,42,0.88),rgba(30,64,175,0.10))] shadow-[0_18px_40px_rgba(15,23,42,0.06)] backdrop-blur-xl flex flex-col h-full' : 'bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-700/50 flex flex-col h-full'} hover:shadow-md transition-all group`}>
+                  {modern && <div className="pointer-events-none absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-white/90 to-transparent dark:via-slate-200/20" />}
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-50 to-cyan-50 dark:from-blue-900/30 dark:to-cyan-900/30 flex items-center justify-center shrink-0 border border-blue-100 dark:border-blue-800/30">
-                        <Globe size={18} className="text-blue-600 dark:text-blue-400" />
-                      </div>
+                       <div className="w-10 h-10 rounded-xl bg-[linear-gradient(135deg,rgba(37,99,235,0.12),rgba(14,165,233,0.08))] dark:bg-[linear-gradient(135deg,rgba(37,99,235,0.2),rgba(14,165,233,0.12))] flex items-center justify-center shrink-0 border border-blue-100/80 dark:border-blue-800/30 shadow-sm">
+                         <Globe size={18} className="text-blue-600 dark:text-blue-400" />
+                       </div>
                       <div>
                         <h4 className="text-sm font-bold text-gray-900 dark:text-white line-clamp-1" title={skill.name}>{skill.name}</h4>
                         <div className="flex items-center gap-2 mt-0.5">
@@ -364,20 +371,20 @@ export default function Skills() {
                   </div>
                   
                   <div className="flex items-center gap-2 pt-3 border-t border-gray-50 dark:border-gray-800">
-                    <a href={`https://clawhub.ai/skills/${skill.id}`} target="_blank" rel="noopener noreferrer"
-                      className="p-2 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors" title="在 ClawHub 查看详情">
-                      <ExternalLink size={16} />
-                    </a>
-                    {isInstalled ? (
-                      <button disabled className="flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 cursor-default">
-                        <Check size={14} />{t.common.installed}
-                      </button>
-                    ) : (
-                      <button onClick={() => handleInstallHint(skill.id)} disabled={installing === skill.id}
-                        className="flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium rounded-lg bg-gray-900 dark:bg-white text-white dark:text-gray-900 hover:bg-gray-800 dark:hover:bg-gray-100 disabled:opacity-50 transition-colors">
-                        {installing === skill.id ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-                        {t.common.install}
-                      </button>
+                     <a href={`https://clawhub.ai/skills/${skill.id}`} target="_blank" rel="noopener noreferrer"
+                       className={`${modern ? 'page-modern-action p-2' : 'p-2 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors'}`} title="在 ClawHub 查看详情">
+                       <ExternalLink size={16} />
+                     </a>
+                     {isInstalled ? (
+                       <button disabled className={`${modern ? 'page-modern-success flex-1 py-2 text-xs' : 'flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 cursor-default'}`}>
+                         <Check size={14} />{t.common.installed}
+                       </button>
+                     ) : (
+                       <button onClick={() => handleInstallHint(skill.id)} disabled={installing === skill.id}
+                         className={`${modern ? 'page-modern-accent flex-1 py-2 text-xs' : 'flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium rounded-lg bg-gray-900 dark:bg-white text-white dark:text-gray-900 hover:bg-gray-800 dark:hover:bg-gray-100 disabled:opacity-50 transition-colors'}`}>
+                         {installing === skill.id ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                         {t.common.install}
+                       </button>
                     )}
                   </div>
                 </div>
@@ -390,13 +397,13 @@ export default function Skills() {
       {/* Config Modal */}
       {configSkill && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setConfigSkill(null)}>
-          <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col border border-gray-100 dark:border-gray-800" onClick={e => e.stopPropagation()}>
-            <div className="px-5 py-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between bg-gray-50/50 dark:bg-gray-900">
+            <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col border border-gray-100 dark:border-gray-800" onClick={e => e.stopPropagation()}>
+            <div className={`${modern ? 'px-5 py-4 border-b border-blue-100/70 dark:border-blue-800/20 flex items-center justify-between bg-[linear-gradient(145deg,rgba(255,255,255,0.82),rgba(239,246,255,0.6))] dark:bg-[linear-gradient(145deg,rgba(10,20,36,0.86),rgba(30,64,175,0.1))]' : 'px-5 py-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between bg-gray-50/50 dark:bg-gray-900'}`}>
               <h3 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                <Sparkles size={16} className="text-violet-500" />
+                <Sparkles size={16} className="text-blue-500" />
                 {configSkill.name} {t.skills.configRequirements}
               </h3>
-              <button onClick={() => setConfigSkill(null)} className="p-1 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+              <button onClick={() => setConfigSkill(null)} className={`${modern ? 'page-modern-action p-1.5' : 'p-1 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors'}`}>
                 <X size={18} />
               </button>
             </div>

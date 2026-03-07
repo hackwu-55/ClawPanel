@@ -9,7 +9,7 @@
 Go 单二进制 · React 18 · TailwindCSS · SQLite · WebSocket 实时推送 · 跨平台
 
 [![License](https://img.shields.io/badge/license-CC%20BY--NC--SA%204.0-red?style=flat-square)](LICENSE)
-[![Version](https://img.shields.io/badge/version-5.1.6-violet?style=flat-square)](https://github.com/zhaoxinyi02/ClawPanel/releases)
+[![Version](https://img.shields.io/badge/version-5.1.7-violet?style=flat-square)](https://github.com/zhaoxinyi02/ClawPanel/releases)
 [![Go](https://img.shields.io/badge/go-1.22+-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev)
 [![React](https://img.shields.io/badge/react-18-61DAFB?style=flat-square&logo=react&logoColor=white)](https://react.dev)
 [![CI](https://github.com/zhaoxinyi02/ClawPanel/actions/workflows/ci.yml/badge.svg)](https://github.com/zhaoxinyi02/ClawPanel/actions/workflows/ci.yml)
@@ -258,7 +258,7 @@ make installer    # 构建 Windows exe 安装包
     - `frontend-dist`
     - `clawpanel-linux-amd64-ci`（用于快速验收）
 - `Release Build`（`.github/workflows/release.yml`）
-  - 触发：`push tag v*`（如 `v5.1.6`）/ 手动触发
+  - 触发：`push tag v*`（如 `v5.1.7`）/ 手动触发
   - 执行：自动构建 `linux/darwin/windows` 多平台二进制 + `ClawPanel-Setup-v{version}.exe`
   - 发布：tag 触发时自动上传到 GitHub Release，并生成 `checksums.txt`
 
@@ -267,8 +267,8 @@ make installer    # 构建 Windows exe 安装包
 示例：
 
 ```bash
-git tag v5.1.6
-git push origin v5.1.6
+git tag v5.1.7
+git push origin v5.1.7
 ```
 
 ## 环境变量
@@ -315,6 +315,12 @@ sc query ClawPanel
 ## 更新日志
 
 完整更新日志请查看 [changelogs/](changelogs/) 目录。
+
+### v5.1.7 — 现代蓝色玻璃 UI 收口与智能体工作台增强
+- **🎨 现代化界面统一**：面板前端正式收口到 modern-only 方向，整体切到蓝色玻璃风，顶部搜索、头像菜单、右上角消息中心与深色模式质感同步升级
+- **🧠 智能体工作台补强**：`概览 / 模型与身份 / 工具与权限 / 核心文件 / 技能与上下文 / 路由上下文 / 高级 JSON` 全部切到统一玻璃标签与操作样式，并继续清理中文模式下的中英混写
+- **📊 仪表盘状态更直观**：首页新增 `OpenClaw` 与 `网关` 状态卡，`今日消息` 统计改为排除 `system` 日志，更接近真实消息流
+- **⚙️ 模型配置更干净**：`系统配置 -> 模型配置` 中每个提供商卡片不再重复显示 `国内 / 国际 / 聚合` 快捷行，统一只在顶部 `快速添加模型服务商` 区域操作
 
 ### v5.1.6 — 修复 QQ 插件安装链路与 NapCat 状态误判
 - **🐛 QQ 插件安装前置**：安装 `QQ (NapCat)` 时会先确保 `qq` 插件安装成功，失败则直接报错终止，不再继续写坏 `openclaw.json`

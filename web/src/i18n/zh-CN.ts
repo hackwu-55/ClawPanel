@@ -60,6 +60,7 @@ const zhCN: Translations = {
     activityLog: '活动日志',
     channels: '通道管理',
     skills: '技能中心',
+    agents: '智能体',
     cronJobs: '定时任务',
     workspace: '工作区',
     systemConfig: '系统配置',

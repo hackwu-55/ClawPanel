@@ -115,6 +115,7 @@ func GetStatus(db *sql.DB, cfg *config.Config, procMgr *process.Manager, napcatM
 
 		// 进程状态
 		procStatus := procMgr.GetStatus()
+		gatewayRunning := procMgr.GatewayListening()
 
 		// 内存使用
 		var memStats runtime.MemStats
@@ -177,6 +178,9 @@ func GetStatus(db *sql.DB, cfg *config.Config, procMgr *process.Manager, napcatM
 				"configured":      cfg.OpenClawInstalled(),
 				"currentModel":    currentModel,
 				"enabledChannels": channels,
+			},
+			"gateway": gin.H{
+				"running": gatewayRunning,
 			},
 			"napcat":  napcatInfo,
 			"process": procStatus,

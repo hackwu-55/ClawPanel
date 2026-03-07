@@ -18,9 +18,10 @@ interface Props {
   tasks: TaskInfo[];
   taskLogs: Record<string, string[]>;
   onRefresh: () => void;
+  mode?: 'sidebar' | 'icon';
 }
 
-export default function MessageCenter({ tasks, taskLogs, onRefresh }: Props) {
+export default function MessageCenter({ tasks, taskLogs, onRefresh, mode = 'sidebar' }: Props) {
   const [open, setOpen] = useState(false);
   const [expandedTask, setExpandedTask] = useState<string | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
@@ -68,26 +69,31 @@ export default function MessageCenter({ tasks, taskLogs, onRefresh }: Props) {
     }
   };
 
+  const indicatorColor = tasks.some(t => t.status === 'failed')
+    ? 'bg-red-500'
+    : runningCount > 0
+      ? 'bg-amber-400'
+      : hasNew
+        ? 'bg-emerald-500'
+        : '';
+
   return (
     <div className="relative">
       {/* Toggle Button */}
       <button
         onClick={() => { setOpen(!open); if (!open) onRefresh(); }}
-        className="flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 w-full relative"
+        className={mode === 'icon'
+          ? 'relative inline-flex items-center justify-center w-10 h-10 rounded-full bg-white border border-slate-200 text-slate-500 hover:text-slate-700 transition-colors'
+          : 'flex items-center gap-2 px-3 py-2 rounded-xl text-[13px] text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 border border-transparent w-full relative transition-all'}
       >
         <Bell size={16} />
-        <span>消息中心</span>
-        {(runningCount > 0 || hasNew) && (
-          <span className="absolute top-1 right-1 flex h-2.5 w-2.5">
-            {runningCount > 0 && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>}
-            <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${runningCount > 0 ? 'bg-blue-500' : 'bg-emerald-500'}`}></span>
-          </span>
-        )}
+        {mode !== 'icon' && <span>消息中心</span>}
+        {indicatorColor && <span className={`absolute ${mode === 'icon' ? 'top-2 right-2' : 'top-1 right-1'} w-2.5 h-2.5 rounded-full ${indicatorColor}`}></span>}
       </button>
 
       {/* Panel */}
       {open && (
-        <div className="absolute bottom-full left-0 mb-2 w-[420px] max-h-[520px] bg-white dark:bg-gray-900 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden z-50 animate-in fade-in slide-in-from-bottom-2 duration-200">
+        <div className={`${mode === 'icon' ? 'absolute top-full right-0 mt-3' : 'absolute bottom-full left-0 mb-2'} w-[420px] max-h-[520px] bg-white dark:bg-gray-900 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden z-50 animate-in fade-in slide-in-from-bottom-2 duration-200`}>
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/50">
             <div className="flex items-center gap-2">

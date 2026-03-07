@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useOutletContext } from 'react-router-dom';
 import { api } from '../lib/api';
 import {
   Clock, Plus, Play, Pause, Trash2, Edit3, RefreshCw,
@@ -21,6 +22,8 @@ interface CronJob {
 
 export default function CronJobs() {
   const { t } = useI18n();
+  const { uiMode } = (useOutletContext() as { uiMode?: 'modern' }) || {};
+  const modern = uiMode === 'modern';
   const [jobs, setJobs] = useState<CronJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -156,18 +159,18 @@ export default function CronJobs() {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className={`space-y-6 ${modern ? 'page-modern' : ''}`}>
+      <div className={`${modern ? 'page-modern-header' : 'flex items-center justify-between'}`}>
         <div>
-          <h2 className="text-xl font-bold text-gray-900 dark:text-white tracking-tight">{t.cron.title}</h2>
-          <p className="text-sm text-gray-500 mt-1">{t.cron.subtitle}</p>
+          <h2 className={`${modern ? 'page-modern-title' : 'text-xl font-bold text-gray-900 dark:text-white tracking-tight'}`}>{t.cron.title}</h2>
+          <p className={`${modern ? 'page-modern-subtitle' : 'text-sm text-gray-500 mt-1'}`}>{t.cron.subtitle}</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={loadJobs} className="flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors shadow-sm">
+          <button onClick={loadJobs} className={`${modern ? 'page-modern-action' : 'flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors shadow-sm'}`}>
             <RefreshCw size={14} />{t.cron.refreshList}
           </button>
           <button onClick={() => setShowCreate(!showCreate)}
-            className="flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 shadow-sm shadow-violet-200 dark:shadow-none transition-all hover:shadow-md hover:shadow-violet-200 dark:hover:shadow-none">
+            className={`${modern ? 'page-modern-accent' : 'flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 shadow-sm shadow-violet-200 dark:shadow-none transition-all hover:shadow-md hover:shadow-violet-200 dark:hover:shadow-none'}`}>
             <Plus size={14} />{t.cron.newJob}
           </button>
         </div>
@@ -182,7 +185,7 @@ export default function CronJobs() {
 
       {/* Create form */}
       {showCreate && (
-        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-violet-100 dark:border-violet-900/30 p-6 space-y-5 animate-in fade-in slide-in-from-top-4 duration-200">
+        <div className={`${modern ? 'page-modern-panel p-6 space-y-5 animate-in fade-in slide-in-from-top-4 duration-200' : 'bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-violet-100 dark:border-violet-900/30 p-6 space-y-5 animate-in fade-in slide-in-from-top-4 duration-200'}`}>
           <div className="flex items-center gap-2 pb-4 border-b border-gray-100 dark:border-gray-700/50">
             <div className="p-1.5 rounded-lg bg-violet-100 dark:bg-violet-900/30 text-violet-600">
               <Plus size={16} />
@@ -194,13 +197,13 @@ export default function CronJobs() {
             <div className="space-y-1.5">
               <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300">{t.cron.jobName}</label>
               <input value={newName} onChange={e => setNewName(e.target.value)} placeholder={t.cron.jobNamePlaceholder}
-                className="w-full px-3.5 py-2.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all" />
+                className={`w-full px-3.5 py-2.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none transition-all ${modern ? 'focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500' : 'focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500'}`} />
             </div>
             <div className="space-y-1.5">
               <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300">{t.cron.cronExpr}</label>
               <div className="relative">
                 <input value={newCron} onChange={e => setNewCron(e.target.value)} placeholder="0 9 * * *"
-                  className="w-full px-3.5 py-2.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all font-mono" />
+                  className={`w-full px-3.5 py-2.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none transition-all font-mono ${modern ? 'focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500' : 'focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500'}`} />
                 <div className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
                   <Clock size={14} />
                 </div>
@@ -214,7 +217,7 @@ export default function CronJobs() {
             <select
               value={newSessionTarget}
               onChange={e => setNewSessionTarget(e.target.value)}
-              className="w-full px-3.5 py-2.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all font-mono"
+              className={`w-full px-3.5 py-2.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none transition-all font-mono ${modern ? 'focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500' : 'focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500'}`}
             >
               {agentOptions.map(id => (
                 <option key={id} value={id}>{id}</option>
@@ -225,18 +228,18 @@ export default function CronJobs() {
           <div className="space-y-1.5">
             <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300">{t.cron.messageContent}</label>
             <textarea value={newMessage} onChange={e => setNewMessage(e.target.value)} placeholder={t.cron.messagePlaceholder}
-              rows={3} className="w-full px-3.5 py-2.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all resize-none" />
+              rows={3} className={`w-full px-3.5 py-2.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none transition-all resize-none ${modern ? 'focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500' : 'focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500'}`} />
           </div>
           
           <div className="flex items-center justify-between pt-2">
             <label className="flex items-center gap-2.5 cursor-pointer group">
               <input type="checkbox" checked={newDeliver} onChange={e => setNewDeliver(e.target.checked)} 
-                className="w-4 h-4 text-violet-600 rounded border-gray-300 focus:ring-violet-500 transition-colors" />
+                className={`w-4 h-4 rounded border-gray-300 transition-colors ${modern ? 'text-blue-600 focus:ring-blue-500' : 'text-violet-600 focus:ring-violet-500'}`} />
               <span className="text-sm text-gray-600 dark:text-gray-400 group-hover:text-gray-900 dark:group-hover:text-gray-200 transition-colors">{t.cron.deliverToChannel}</span>
             </label>
             <div className="flex gap-3">
               <button onClick={() => setShowCreate(false)} className="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors">{t.common.cancel}</button>
-              <button onClick={createJob} className="px-6 py-2 text-sm font-medium bg-violet-600 text-white hover:bg-violet-700 rounded-lg shadow-sm shadow-violet-200 dark:shadow-none transition-all hover:shadow-md hover:shadow-violet-200 dark:hover:shadow-none">{t.cron.createNow}</button>
+              <button onClick={createJob} className={`${modern ? 'page-modern-accent px-6 py-2 text-sm' : 'px-6 py-2 text-sm font-medium bg-violet-600 text-white hover:bg-violet-700 rounded-lg shadow-sm shadow-violet-200 dark:shadow-none transition-all hover:shadow-md hover:shadow-violet-200 dark:hover:shadow-none'}`}>{t.cron.createNow}</button>
             </div>
           </div>
         </div>
@@ -257,9 +260,9 @@ export default function CronJobs() {
       ) : (
         <div className="grid gap-3">
           {jobs.map(job => (
-            <div key={job.id} className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 hover:shadow-md transition-all group overflow-hidden">
+            <div key={job.id} className={`${modern ? 'page-modern-panel hover:shadow-md transition-all group overflow-hidden' : 'bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 hover:shadow-md transition-all group overflow-hidden'}`}>
               <div className="flex items-center gap-4 p-4 cursor-pointer" onClick={() => setExpandedId(expandedId === job.id ? null : job.id)}>
-                <div className={`p-2.5 rounded-xl shrink-0 transition-colors ${job.enabled ? 'bg-violet-100 dark:bg-violet-900/30 text-violet-600' : 'bg-gray-100 dark:bg-gray-800 text-gray-400'}`}>
+                <div className={`p-2.5 rounded-xl shrink-0 transition-colors border ${job.enabled ? 'bg-blue-100/80 dark:bg-blue-900/20 border-blue-100 dark:border-blue-800/30 text-blue-600 dark:text-blue-300' : 'bg-gray-100 dark:bg-gray-800 border-transparent text-gray-400'}`}>
                   <Clock size={20} />
                 </div>
                 
@@ -327,7 +330,7 @@ export default function CronJobs() {
                     {(job.payload.text || job.payload.message) && (
                       <div className="md:col-span-2 space-y-1.5">
                         <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{t.cron.messageContent}</span>
-                        <div className="p-3 rounded-lg bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 text-xs font-mono text-gray-600 dark:text-gray-300 whitespace-pre-wrap shadow-sm">
+                        <div className={`${modern ? 'p-3 rounded-xl bg-white/75 dark:bg-slate-900/55 border border-blue-100/70 dark:border-slate-700/70 text-xs font-mono text-gray-600 dark:text-gray-300 whitespace-pre-wrap shadow-sm backdrop-blur-xl' : 'p-3 rounded-lg bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 text-xs font-mono text-gray-600 dark:text-gray-300 whitespace-pre-wrap shadow-sm'}`}>
                           {job.payload.text || job.payload.message}
                         </div>
                       </div>

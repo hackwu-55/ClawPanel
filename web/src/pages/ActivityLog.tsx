@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
+import { useOutletContext } from 'react-router-dom';
 import { api } from '../lib/api';
 import {
   Search, ChevronDown, ChevronRight, Trash2, ArrowDown, RefreshCw,
@@ -20,6 +21,8 @@ interface Props {
 
 export default function ActivityLog({ ws }: Props) {
   const { t } = useI18n();
+  const { uiMode } = (useOutletContext() as { uiMode?: 'modern' }) || {};
+  const modern = uiMode === 'modern';
   const [search, setSearch] = useState('');
   const [sourceFilter, setSourceFilter] = useState<string>('');
   const [typeFilter, setTypeFilter] = useState<string>('');
@@ -69,20 +72,20 @@ export default function ActivityLog({ ws }: Props) {
   };
 
   return (
-    <div className="h-full flex flex-col space-y-4">
-      <div className="flex items-center justify-between shrink-0">
+    <div className={`h-full flex flex-col space-y-4 ${modern ? 'page-modern' : ''}`}>
+      <div className={`${modern ? 'page-modern-header shrink-0' : 'flex items-center justify-between shrink-0'}`}>
         <div>
-          <h2 className="text-xl font-bold text-gray-900 dark:text-white tracking-tight">{t.activityLog.title}</h2>
-          <p className="text-sm text-gray-500 mt-1">{t.activityLog.subtitle}</p>
+          <h2 className={`${modern ? 'page-modern-title' : 'text-xl font-bold text-gray-900 dark:text-white tracking-tight'}`}>{t.activityLog.title}</h2>
+          <p className={`${modern ? 'page-modern-subtitle' : 'text-sm text-gray-500 mt-1'}`}>{t.activityLog.subtitle}</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={handleExport} className="flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors shadow-sm">
+          <button onClick={handleExport} className={`${modern ? 'page-modern-accent' : 'flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors shadow-sm'}`}>
             <Download size={14} />{t.activityLog.exportLog}
           </button>
         </div>
       </div>
 
-      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 flex-1 flex flex-col min-h-0 overflow-hidden">
+      <div className={`${modern ? 'page-modern-panel' : 'bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50'} flex-1 flex flex-col min-h-0 overflow-hidden`}>
         {/* Toolbar */}
         <div className="flex flex-col gap-3 px-5 py-4 border-b border-gray-100 dark:border-gray-800 bg-gray-50/30 dark:bg-gray-800/50 shrink-0">
           <div className="flex items-center justify-between">
@@ -150,7 +153,7 @@ placeholder={t.activityLog.searchPlaceholder}
                 <button key={f.key} onClick={() => setTypeFilter(f.key)}
                   className={`px-2.5 py-1.5 text-xs rounded-lg transition-all whitespace-nowrap ${
                     typeFilter === f.key 
-                    ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 font-semibold shadow-sm' 
+                    ? 'border border-blue-100/80 bg-blue-50/85 dark:bg-blue-900/20 dark:border-blue-800/40 text-blue-700 dark:text-blue-300 font-semibold shadow-sm backdrop-blur-xl' 
                     : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700/50 hover:text-gray-700 dark:hover:text-gray-300'
                   }`}>
                   {f.label}

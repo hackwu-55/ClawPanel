@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
+import { useOutletContext } from 'react-router-dom';
 import { api } from '../lib/api';
 import {
   Save, RefreshCw, ChevronDown, ChevronRight,
@@ -77,6 +78,8 @@ function buildConfigDiff(before: any, after: any, prefix = ''): ConfigDiffItem[]
 
 export default function SystemConfig() {
   const { t: i18n } = useI18n();
+  const { uiMode } = (useOutletContext() as { uiMode?: 'modern' }) || {};
+  const modern = uiMode === 'modern';
   const [config, setConfig] = useState<any>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -374,19 +377,19 @@ export default function SystemConfig() {
   const primaryModel = typeof primaryModelRaw === 'string' ? primaryModelRaw : (primaryModelRaw?.primary || '');
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className={`space-y-6 ${modern ? 'page-modern' : ''}`}>
+      <div className={`${modern ? 'page-modern-header' : 'flex items-center justify-between'}`}>
         <div>
-          <h2 className="text-xl font-bold text-gray-900 dark:text-white tracking-tight">{i18n.sysConfig.title}</h2>
-          <p className="text-sm text-gray-500 mt-1">{i18n.sysConfig.subtitle}</p>
+          <h2 className={`${modern ? 'page-modern-title text-xl' : 'text-xl font-bold text-gray-900 dark:text-white tracking-tight'}`}>{i18n.sysConfig.title}</h2>
+          <p className={`${modern ? 'page-modern-subtitle text-sm' : 'text-sm text-gray-500 mt-1'}`}>{i18n.sysConfig.subtitle}</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={loadConfig} className="flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors shadow-sm">
+          <button onClick={loadConfig} className={`${modern ? 'page-modern-control px-3.5 py-2 text-xs font-medium' : 'flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors shadow-sm'}`}>
             <RefreshCw size={14} />{i18n.common.refresh}
           </button>
           {(tab === 'models' || tab === 'general' || tab === 'identity') && (
             <button onClick={handleSave} disabled={saving}
-              className="flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 shadow-sm shadow-violet-200 dark:shadow-none transition-all hover:shadow-md hover:shadow-violet-200 dark:hover:shadow-none disabled:opacity-50">
+              className={`${modern ? 'page-modern-accent px-4 py-2 text-xs font-medium disabled:opacity-50' : 'flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 shadow-sm shadow-violet-200 dark:shadow-none transition-all hover:shadow-md hover:shadow-violet-200 dark:hover:shadow-none disabled:opacity-50'}`}>
               {saving ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
               {saving ? i18n.sysConfig.savingConfig : i18n.sysConfig.saveAll}
             </button>
@@ -402,7 +405,7 @@ export default function SystemConfig() {
       )}
 
       {/* Tabs */}
-      <div className="flex gap-6 border-b border-gray-200 dark:border-gray-800 overflow-x-auto pb-px">
+      <div className={`${modern ? 'inline-flex flex-wrap gap-2 p-1 rounded-2xl border border-blue-100/70 bg-[linear-gradient(145deg,rgba(255,255,255,0.78),rgba(239,246,255,0.62))] dark:bg-[linear-gradient(145deg,rgba(10,20,36,0.82),rgba(30,64,175,0.1))] dark:border-blue-800/20 shadow-sm backdrop-blur-xl' : 'flex gap-6 border-b border-gray-200 dark:border-gray-800 overflow-x-auto pb-px'}`}>
         {([
           { id: 'models' as ConfigTab, label: i18n.sysConfig.tabModels, icon: Brain },
           { id: 'identity' as ConfigTab, label: i18n.sysConfig.tabIdentity, icon: Users },
@@ -412,7 +415,7 @@ export default function SystemConfig() {
           { id: 'health' as ConfigTab, label: '配置检测', icon: Shield },
         ]).map(tb => (
           <button key={tb.id} onClick={() => setTab(tb.id)}
-            className={`flex items-center gap-2 pb-3 text-sm font-medium border-b-2 transition-all whitespace-nowrap ${tab === tb.id ? 'border-violet-600 text-violet-700 dark:text-violet-400' : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}>
+            className={`${modern ? 'flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-medium border transition-all whitespace-nowrap' : 'flex items-center gap-2 pb-3 text-sm font-medium border-b-2 transition-all whitespace-nowrap'} ${tab === tb.id ? (modern ? 'border-blue-100/80 bg-blue-50/85 dark:bg-blue-900/20 dark:border-blue-800/40 text-blue-700 dark:text-blue-300 shadow-sm' : 'border-violet-600 text-violet-700 dark:text-violet-400') : (modern ? 'border-transparent text-gray-500 hover:bg-white/70 dark:hover:bg-slate-800/70 hover:text-gray-700 dark:hover:text-gray-300' : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300')}`}>
             <tb.icon size={16} />{tb.label}
           </button>
         ))}
@@ -422,7 +425,7 @@ export default function SystemConfig() {
       {tab === 'models' && (
         <div className="space-y-6 animate-in fade-in slide-in-from-top-4 duration-200">
           {showRestartPrompt && (
-            <div className="rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/30 overflow-hidden">
+            <div className={`${modern ? 'rounded-[24px] bg-[linear-gradient(145deg,rgba(255,251,235,0.86),rgba(239,246,255,0.62))] dark:bg-[linear-gradient(145deg,rgba(120,53,15,0.2),rgba(30,64,175,0.12))] border border-amber-200/70 dark:border-amber-800/30 overflow-hidden shadow-[0_16px_34px_rgba(245,158,11,0.08)] backdrop-blur-xl' : 'rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/30 overflow-hidden'}`}>
               <div className="px-4 py-3 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-300">
                   <AlertTriangle size={16} className="shrink-0" />
@@ -437,7 +440,7 @@ export default function SystemConfig() {
                   } catch { setMsg('❌ 重启失败'); }
                   finally { setRestarting(false); setTimeout(() => setMsg(''), 4000); }
                 }} disabled={restarting}
-                  className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 shadow-sm transition-all whitespace-nowrap shrink-0">
+                  className={`${modern ? 'page-modern-warn px-4 py-2 text-xs font-medium whitespace-nowrap shrink-0' : 'flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 shadow-sm transition-all whitespace-nowrap shrink-0'}`}>
                   <RefreshCw size={12} className={restarting ? 'animate-spin' : ''} />
                   {restarting ? '重启中...' : '重启网关'}
                 </button>
@@ -447,13 +450,13 @@ export default function SystemConfig() {
               </div>
             </div>
           )}
-          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 p-5">
+          <div className={`${modern ? 'page-modern-panel p-5' : 'bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 p-5'}`}>
             <h3 className="text-sm font-bold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
-              <Brain size={16} className="text-violet-500" /> {i18n.sysConfig.primaryModel}
+              <Brain size={16} className="text-blue-500" /> {i18n.sysConfig.primaryModel}
             </h3>
             <div className="relative">
               <select value={primaryModel} onChange={e => setPrimaryModel(e.target.value)}
-                className="w-full pl-4 pr-10 py-2.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all font-mono appearance-none cursor-pointer">
+                className="w-full pl-4 pr-10 py-2.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-mono appearance-none cursor-pointer">
                 <option value="">选择主模型...</option>
                 {Object.entries(providers).map(([pid, prov]: [string, any]) => {
                   const hasKey = !!(prov as any).apiKey;
@@ -469,15 +472,15 @@ export default function SystemConfig() {
             {primaryModel && (
               <p className="text-xs text-gray-500 mt-2 flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                当前: <code className="bg-gray-100 dark:bg-gray-800 px-1 rounded text-violet-600 dark:text-violet-400 font-mono">{primaryModel}</code>
+                当前: <code className="bg-gray-100 dark:bg-gray-800 px-1 rounded text-blue-600 dark:text-blue-400 font-mono">{primaryModel}</code>
               </p>
             )}
           </div>
 
           {/* Quick add provider from presets */}
-          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 p-5 space-y-3">
+          <div className={`${modern ? 'page-modern-panel p-5 space-y-3' : 'bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 p-5 space-y-3'}`}>
             <h3 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">
-              <Plus size={16} className="text-violet-500" /> 快速添加模型服务商
+              <Plus size={16} className="text-blue-500" /> 快速添加模型服务商
             </h3>
             <p className="text-xs text-gray-500">点击服务商名称一键添加，填入 API Key 即可使用</p>
             <div className="space-y-2">
@@ -523,19 +526,19 @@ export default function SystemConfig() {
                   if (!clone.models.providers) clone.models.providers = {};
                   clone.models.providers[id] = { baseUrl: '', apiKey: '', api: 'openai-completions', models: [] };
                 });
-              }} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400 hover:bg-violet-100 dark:hover:bg-violet-900/50 transition-colors">
+              }} className={`${modern ? 'page-modern-action px-3 py-1.5 text-xs font-medium' : 'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400 hover:bg-violet-100 dark:hover:bg-violet-900/50 transition-colors'}`}>
                 <Plus size={14} />{i18n.sysConfig.addProvider}
               </button>
             </div>
 
             {Object.entries(providers).map(([pid, prov]: [string, any]) => (
-              <div key={pid} className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 overflow-hidden transition-all hover:shadow-md">
+              <div key={pid} className={`${modern ? 'page-modern-panel overflow-hidden transition-all hover:shadow-md' : 'bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 overflow-hidden transition-all hover:shadow-md'}`}>
                 <div className="p-5 space-y-5">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <div className="p-2 rounded-lg bg-gradient-to-br from-violet-100 to-indigo-100 dark:from-violet-900/40 dark:to-indigo-900/40 text-violet-600 dark:text-violet-400">
-                        <Brain size={18} />
-                      </div>
+                        <div className="p-2 rounded-xl border border-blue-100/80 dark:border-blue-800/40 bg-[linear-gradient(135deg,rgba(37,99,235,0.12),rgba(14,165,233,0.08))] dark:bg-[linear-gradient(135deg,rgba(37,99,235,0.2),rgba(14,165,233,0.12))] text-blue-600 dark:text-blue-300">
+                          <Brain size={18} />
+                        </div>
                       <div className="flex items-baseline gap-2">
                         <input value={pid} onChange={e => {
                           const newId = e.target.value;
@@ -554,7 +557,7 @@ export default function SystemConfig() {
                             clone.agents.defaults.model.primary = newId + primary.slice(pid.length);
                           }
                           });
-                        }} className="text-base font-bold bg-transparent border-b border-dashed border-gray-300 dark:border-gray-600 focus:border-violet-500 outline-none px-1 py-0.5 min-w-[120px] transition-colors text-gray-900 dark:text-white" title="点击编辑 Provider ID" />
+                        }} className="text-base font-bold bg-transparent border-b border-dashed border-gray-300 dark:border-gray-600 focus:border-blue-500 outline-none px-1 py-0.5 min-w-[120px] transition-colors text-gray-900 dark:text-white" title="点击编辑 Provider ID" />
                         {prov.models?.length > 0 && <span className="text-xs text-gray-400 font-medium px-2 py-0.5 bg-gray-50 dark:bg-gray-800 rounded-full">{prov.models.length} 模型</span>}
                       </div>
                     </div>
@@ -565,56 +568,11 @@ export default function SystemConfig() {
                     }} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"><Trash2 size={16} /></button>
                   </div>
 
-                  <div className="space-y-2 pb-2">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider mr-1">国内</span>
-                      {KNOWN_PROVIDERS.filter(kp => kp.category === 'cn').map(kp => (
-                        <button key={kp.id} onClick={() => {
-                          updateConfig((clone: any) => {
-                          if (!clone.models) clone.models = {};
-                          if (!clone.models.providers) clone.models.providers = {};
-                          clone.models.providers[pid] = { ...clone.models.providers[pid], baseUrl: kp.baseUrl, api: kp.apiType || 'openai-completions' };
-                          });
-                        }} className="px-2 py-0.5 text-[10px] font-medium rounded-md bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors border border-red-100 dark:border-red-800/30" title={kp.nameZh}>
-                          {kp.nameZh || kp.name}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider mr-1">国际</span>
-                      {KNOWN_PROVIDERS.filter(kp => kp.category === 'intl').map(kp => (
-                        <button key={kp.id} onClick={() => {
-                          updateConfig((clone: any) => {
-                          if (!clone.models) clone.models = {};
-                          if (!clone.models.providers) clone.models.providers = {};
-                          clone.models.providers[pid] = { ...clone.models.providers[pid], baseUrl: kp.baseUrl, api: kp.apiType || 'openai-completions' };
-                          });
-                        }} className="px-2 py-0.5 text-[10px] font-medium rounded-md bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors border border-blue-100 dark:border-blue-800/30">
-                          {kp.name}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider mr-1">聚合</span>
-                      {KNOWN_PROVIDERS.filter(kp => kp.category === 'agg').map(kp => (
-                        <button key={kp.id} onClick={() => {
-                          updateConfig((clone: any) => {
-                          if (!clone.models) clone.models = {};
-                          if (!clone.models.providers) clone.models.providers = {};
-                          clone.models.providers[pid] = { ...clone.models.providers[pid], baseUrl: kp.baseUrl, api: kp.apiType || 'openai-completions' };
-                          });
-                        }} className="px-2 py-0.5 text-[10px] font-medium rounded-md bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors border border-amber-100 dark:border-amber-800/30">
-                          {kp.name}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                     <div>
                       <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5">Base URL</label>
                       <input value={prov.baseUrl || ''} onChange={e => setVal(`models.providers.${pid}.baseUrl`, e.target.value)}
-                        placeholder="https://api.openai.com/v1" className="w-full px-3.5 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50/50 dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all font-mono" />
+                        placeholder="https://api.openai.com/v1" className="w-full px-3.5 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50/50 dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-mono" />
                     </div>
                     <div>
                       <div className="flex items-center justify-between mb-1.5">
@@ -623,7 +581,7 @@ export default function SystemConfig() {
                           const matched = KNOWN_PROVIDERS.find(kp => prov.baseUrl?.includes(kp.baseUrl.replace('https://', '').split('/')[0]));
                           return matched ? (
                             <a href={matched.apiKeyUrl} target="_blank" rel="noopener noreferrer"
-                              className="text-[10px] text-violet-500 hover:text-violet-700 dark:hover:text-violet-300 flex items-center gap-1 hover:underline">
+                              className="text-[10px] text-blue-500 hover:text-blue-700 dark:hover:text-blue-300 flex items-center gap-1 hover:underline">
                               <Key size={10} /> 获取 API Key
                             </a>
                           ) : null;
@@ -631,7 +589,7 @@ export default function SystemConfig() {
                       </div>
                       <div className="relative group">
                         <input type="password" value={prov.apiKey || ''} onChange={e => setVal(`models.providers.${pid}.apiKey`, e.target.value)}
-                          placeholder="sk-..." className="w-full px-3.5 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50/50 dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all font-mono tracking-wider" />
+                          placeholder="sk-..." className="w-full px-3.5 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50/50 dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-mono tracking-wider" />
                         <div className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
                           <Key size={14} />
                         </div>
@@ -641,7 +599,7 @@ export default function SystemConfig() {
                       <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5">API 类型</label>
                       <div className="relative">
                         <select value={prov.api || 'openai-completions'} onChange={e => setVal(`models.providers.${pid}.api`, e.target.value)}
-                          className="w-full px-3.5 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50/50 dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 appearance-none cursor-pointer">
+                          className="w-full px-3.5 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50/50 dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 appearance-none cursor-pointer">
                           <option value="openai-completions">OpenAI Chat Completions API</option>
                           <option value="openai-responses">OpenAI Responses API</option>
                           <option value="openai-codex-responses">OpenAI Codex Responses API</option>
@@ -657,7 +615,7 @@ export default function SystemConfig() {
                     <div>
                       <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5">备注 (可选)</label>
                       <input value={prov._note || ''} onChange={e => setVal(`models.providers.${pid}._note`, e.target.value)}
-                        placeholder="例: 公司账号 / 个人测试" className="w-full px-3.5 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50/50 dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all" />
+                        placeholder="例: 公司账号 / 个人测试" className="w-full px-3.5 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50/50 dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
                     </div>
                   </div>
                   <ProviderHealthCheck pid={pid} prov={prov} />
@@ -677,13 +635,13 @@ export default function SystemConfig() {
                           });
                         };
                         return (
-                        <div key={idx} className="p-3 rounded-lg bg-gray-50/80 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-800 space-y-3 group hover:border-violet-200 dark:hover:border-violet-800 transition-colors">
+                        <div key={idx} className="p-3 rounded-xl bg-[linear-gradient(145deg,rgba(255,255,255,0.76),rgba(239,246,255,0.56))] dark:bg-[linear-gradient(145deg,rgba(12,24,42,0.8),rgba(30,64,175,0.08))] border border-blue-100/70 dark:border-blue-800/20 space-y-3 group hover:border-blue-200 dark:hover:border-blue-800/40 transition-colors backdrop-blur-xl">
                           <div className="flex items-center gap-3">
-                            <div className="p-1.5 rounded bg-white dark:bg-gray-800 shadow-sm text-violet-500">
+                            <div className="p-1.5 rounded-xl bg-white/80 dark:bg-slate-800/70 shadow-sm text-blue-500 border border-blue-100/60 dark:border-slate-700/60">
                               <Box size={14} />
                             </div>
                             <input value={mObj.id || ''} onChange={e => updateModel('id', e.target.value)}
-                              placeholder="模型 ID" className="flex-1 px-2 py-1 text-sm font-mono font-medium bg-transparent border-b border-transparent focus:border-violet-500 outline-none transition-colors" />
+                              placeholder="模型 ID" className="flex-1 px-2 py-1 text-sm font-mono font-medium bg-transparent border-b border-transparent focus:border-blue-500 outline-none transition-colors" />
                             <button onClick={() => {
                               updateConfig((clone: any) => {
                                 clone.models.providers[pid].models.splice(idx, 1);
@@ -694,18 +652,18 @@ export default function SystemConfig() {
                             <div>
                               <label className="text-[10px] text-gray-400 font-medium block mb-1">Context Window</label>
                               <input type="number" value={mObj.contextWindow ?? ''} onChange={e => updateModel('contextWindow', e.target.value ? Number(e.target.value) : undefined)}
-                                placeholder="128k" className="w-full px-2 py-1 text-xs border border-gray-200 dark:border-gray-700 rounded bg-white dark:bg-gray-800 font-mono focus:border-violet-500 outline-none" />
+                                placeholder="128k" className="w-full px-2 py-1 text-xs border border-gray-200 dark:border-gray-700 rounded bg-white dark:bg-gray-800 font-mono focus:border-blue-500 outline-none" />
                             </div>
                             <div>
                               <label className="text-[10px] text-gray-400 font-medium block mb-1">Max Tokens</label>
                               <input type="number" value={mObj.maxTokens ?? ''} onChange={e => updateModel('maxTokens', e.target.value ? Number(e.target.value) : undefined)}
-                                placeholder="8k" className="w-full px-2 py-1 text-xs border border-gray-200 dark:border-gray-700 rounded bg-white dark:bg-gray-800 font-mono focus:border-violet-500 outline-none" />
+                                placeholder="8k" className="w-full px-2 py-1 text-xs border border-gray-200 dark:border-gray-700 rounded bg-white dark:bg-gray-800 font-mono focus:border-blue-500 outline-none" />
                             </div>
                             <div>
                               <label className="text-[10px] text-gray-400 font-medium block mb-1">推理模型</label>
                               <button onClick={() => updateModel('reasoning', !mObj.reasoning)}
-                                className={`w-full px-2 py-1 text-xs rounded border transition-colors text-left flex items-center gap-1.5 ${mObj.reasoning ? 'bg-violet-50 dark:bg-violet-900/30 border-violet-200 dark:border-violet-800 text-violet-700 dark:text-violet-300' : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-500'}`}>
-                                <div className={`w-2 h-2 rounded-full ${mObj.reasoning ? 'bg-violet-500' : 'bg-gray-300'}`}></div>
+                                className={`w-full px-2 py-1 text-xs rounded border transition-colors text-left flex items-center gap-1.5 ${mObj.reasoning ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300' : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-500'}`}>
+                                <div className={`w-2 h-2 rounded-full ${mObj.reasoning ? 'bg-blue-500' : 'bg-gray-300'}`}></div>
                                 {mObj.reasoning ? '是' : '否'}
                               </button>
                             </div>
@@ -751,7 +709,7 @@ export default function SystemConfig() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 p-5 space-y-3">
               <div className="flex items-center gap-2">
-                <div className="p-1.5 rounded-lg bg-violet-100 dark:bg-violet-900/30 text-violet-600">
+                <div className="p-1.5 rounded-xl bg-blue-100/80 dark:bg-blue-900/20 text-blue-600 border border-blue-100/70 dark:border-blue-800/30">
                   <Key size={16} />
                 </div>
                 <h3 className="text-sm font-bold text-gray-900 dark:text-white">管理后台登录密码</h3>
@@ -791,7 +749,7 @@ export default function SystemConfig() {
           </div>
 
           {/* Identity MD files editor */}
-          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 overflow-hidden flex flex-col h-[600px]">
+          <div className={`${modern ? 'page-modern-panel overflow-hidden flex flex-col h-[600px]' : 'bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 overflow-hidden flex flex-col h-[600px]'}`}>
             <div className="px-5 py-4 flex items-center gap-3 border-b border-gray-100 dark:border-gray-800 bg-gray-50/30 dark:bg-gray-900/30">
               <div className="p-1.5 rounded-lg bg-blue-100 dark:bg-blue-900/30 text-blue-600">
                 <FileText size={16} />
@@ -808,10 +766,10 @@ export default function SystemConfig() {
                   <button key={doc.name} onClick={() => { setSelectedIdentityDoc(doc); setIdentityContent(doc.content || ''); }}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left text-xs transition-all duration-200 group ${
                       selectedIdentityDoc?.name === doc.name
-                        ? 'bg-white dark:bg-gray-800 text-violet-700 dark:text-violet-300 font-medium shadow-sm ring-1 ring-violet-100 dark:ring-violet-900'
+                        ? 'bg-white dark:bg-gray-800 text-blue-700 dark:text-blue-300 font-medium shadow-sm ring-1 ring-blue-100 dark:ring-blue-900'
                         : 'text-gray-600 dark:text-gray-400 hover:bg-white dark:hover:bg-gray-800 hover:shadow-sm'
                     }`}>
-                    <div className={`shrink-0 ${selectedIdentityDoc?.name === doc.name ? 'text-violet-500' : 'text-gray-400 group-hover:text-gray-500'}`}>
+                    <div className={`shrink-0 ${selectedIdentityDoc?.name === doc.name ? 'text-blue-500' : 'text-gray-400 group-hover:text-gray-500'}`}>
                       <FileText size={14} />
                     </div>
                     <div className="min-w-0 flex-1">
@@ -838,7 +796,7 @@ export default function SystemConfig() {
                         } catch (err) { setMsg('保存失败: ' + String(err)); }
                         finally { setIdentitySaving(false); setTimeout(() => setMsg(''), 3000); }
                       }} disabled={identitySaving}
-                        className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 shadow-sm transition-all hover:shadow-md hover:shadow-violet-200 dark:hover:shadow-none">
+                        className={`${modern ? 'page-modern-accent px-4 py-1.5 text-xs font-medium disabled:opacity-50' : 'flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 shadow-sm transition-all hover:shadow-md hover:shadow-violet-200 dark:hover:shadow-none'}`}>
                         {identitySaving ? <RefreshCw size={12} className="animate-spin" /> : <Save size={12} />}
                         {identitySaving ? '保存中...' : '保存更改'}
                       </button>
@@ -877,7 +835,7 @@ export default function SystemConfig() {
             { path: 'session.agentToAgent.maxPingPongTurns', label: '最大来回委托轮次', type: 'number' as const, placeholder: '4' },
             { path: 'tools.sessions.visibility', label: '会话可见性', type: 'select' as const, options: ['same-agent', 'all-agents'] },
           ]} getVal={getVal} setVal={setVal} />
-          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 p-5 space-y-2">
+          <div className={`${modern ? 'page-modern-panel p-5 space-y-2' : 'bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 p-5 space-y-2'}`}>
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-gray-900 dark:text-white">Agent 间委托白名单</h3>
               <code className="text-[9px] text-gray-400 font-mono bg-gray-50 dark:bg-gray-900 px-1.5 py-0.5 rounded border border-gray-100 dark:border-gray-800">tools.agentToAgent.allow</code>
@@ -894,7 +852,7 @@ export default function SystemConfig() {
                 setVal('tools.agentToAgent.allow', list);
               }}
               placeholder="例如: *, main->work, work->main"
-              className="w-full px-3.5 py-2.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all font-mono"
+              className="w-full px-3.5 py-2.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-mono"
             />
             <p className="text-[11px] text-gray-500">用逗号分隔规则；保存时会写为数组。</p>
           </div>
@@ -914,7 +872,7 @@ export default function SystemConfig() {
             { path: 'env.vars.GOOGLE_API_KEY', label: 'Google API Key', type: 'password' as const },
           ]} getVal={getVal} setVal={setVal} />
           <SudoPasswordSection />
-          <details className="card">
+          <details className={`${modern ? 'page-modern-panel overflow-hidden' : 'card'}`}>
             <summary className="px-4 py-3 text-xs font-medium text-gray-500 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50">高级 JSON 只读预览</summary>
             <div className="px-4 pt-2 text-[11px] text-gray-400">以下内容为当前编辑态配置快照（只读），保存前会先弹出差异预览。</div>
             <pre className="px-4 pb-4 text-[11px] text-gray-600 dark:text-gray-400 overflow-x-auto max-h-96 overflow-y-auto font-mono">{JSON.stringify(config, null, 2)}</pre>
@@ -925,15 +883,15 @@ export default function SystemConfig() {
       {/* === Version Management Tab === */}
       {tab === 'version' && (
         <div className="space-y-6 animate-in fade-in slide-in-from-top-4 duration-200">
-          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 p-6 space-y-6">
+          <div className={`${modern ? 'page-modern-panel p-6 space-y-6' : 'bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 p-6 space-y-6'}`}>
             <h3 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">
-              <Package size={16} className="text-violet-500" /> OpenClaw 版本
+              <Package size={16} className="text-blue-500" /> OpenClaw 版本
             </h3>
             
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="bg-gray-50 dark:bg-gray-900/50 rounded-xl p-4 border border-gray-100 dark:border-gray-800 flex items-center gap-4">
-                <div className="w-10 h-10 rounded-lg bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center shrink-0">
-                  <Package size={20} className="text-violet-600 dark:text-violet-400" />
+              <div className={`${modern ? 'rounded-[22px] p-4 border border-blue-100/70 dark:border-blue-800/20 bg-[linear-gradient(145deg,rgba(255,255,255,0.78),rgba(239,246,255,0.58))] dark:bg-[linear-gradient(145deg,rgba(12,24,42,0.82),rgba(30,64,175,0.1))] flex items-center gap-4 backdrop-blur-xl' : 'bg-gray-50 dark:bg-gray-900/50 rounded-xl p-4 border border-gray-100 dark:border-gray-800 flex items-center gap-4'}`}>
+                <div className="w-10 h-10 rounded-xl bg-blue-100/80 dark:bg-blue-900/20 border border-blue-100/70 dark:border-blue-800/30 flex items-center justify-center shrink-0">
+                  <Package size={20} className="text-blue-600 dark:text-blue-300" />
                 </div>
                 <div>
                   <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">当前版本</p>
@@ -941,7 +899,7 @@ export default function SystemConfig() {
                 </div>
               </div>
               
-              <div className="bg-gray-50 dark:bg-gray-900/50 rounded-xl p-4 border border-gray-100 dark:border-gray-800 flex items-center gap-4">
+              <div className={`${modern ? 'rounded-[22px] p-4 border border-blue-100/70 dark:border-blue-800/20 bg-[linear-gradient(145deg,rgba(255,255,255,0.78),rgba(239,246,255,0.58))] dark:bg-[linear-gradient(145deg,rgba(12,24,42,0.82),rgba(30,64,175,0.1))] flex items-center gap-4 backdrop-blur-xl' : 'bg-gray-50 dark:bg-gray-900/50 rounded-xl p-4 border border-gray-100 dark:border-gray-800 flex items-center gap-4'}`}>
                 <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${versionInfo.updateAvailable ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400' : 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'}`}>
                   {versionInfo.updateAvailable ? <AlertTriangle size={20} /> : <CheckCircle size={20} />}
                 </div>
@@ -951,7 +909,7 @@ export default function SystemConfig() {
                 </div>
               </div>
               
-              <div className="bg-gray-50 dark:bg-gray-900/50 rounded-xl p-4 border border-gray-100 dark:border-gray-800 flex items-center gap-4">
+              <div className={`${modern ? 'rounded-[22px] p-4 border border-blue-100/70 dark:border-blue-800/20 bg-[linear-gradient(145deg,rgba(255,255,255,0.78),rgba(239,246,255,0.58))] dark:bg-[linear-gradient(145deg,rgba(12,24,42,0.82),rgba(30,64,175,0.1))] flex items-center gap-4 backdrop-blur-xl' : 'bg-gray-50 dark:bg-gray-900/50 rounded-xl p-4 border border-gray-100 dark:border-gray-800 flex items-center gap-4'}`}>
                 <div className="w-10 h-10 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center shrink-0">
                   <RefreshCw size={20} className="text-gray-400" />
                 </div>
@@ -968,13 +926,13 @@ export default function SystemConfig() {
           {/* ClawPanel 面板自检更新 */}
           <PanelUpdateSection />
 
-          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 p-6 space-y-4">
+          <div className={`${modern ? 'page-modern-panel p-6 space-y-4' : 'bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 p-6 space-y-4'}`}>
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                <Archive size={16} className="text-violet-500" /> 备份与恢复
+                <Archive size={16} className="text-blue-500" /> 备份与恢复
               </h3>
               <button onClick={handleBackup} disabled={backingUp}
-                className="flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 shadow-sm shadow-violet-200 dark:shadow-none transition-all hover:shadow-md hover:shadow-violet-200 dark:hover:shadow-none">
+                className={`${modern ? 'page-modern-accent px-4 py-2 text-xs font-medium disabled:opacity-50' : 'flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 shadow-sm shadow-violet-200 dark:shadow-none transition-all hover:shadow-md hover:shadow-violet-200 dark:hover:shadow-none'}`}>
                 {backingUp ? <RefreshCw size={14} className="animate-spin" /> : <Archive size={14} />}
                 {backingUp ? '备份中...' : '立即备份'}
               </button>
@@ -986,11 +944,11 @@ export default function SystemConfig() {
             ) : (
               <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
                 {backups.map((b: any) => (
-                  <div key={b.name} className="flex items-center justify-between p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-800 hover:border-violet-200 dark:hover:border-violet-800 transition-colors group">
+                  <div key={b.name} className={`${modern ? 'flex items-center justify-between p-3 rounded-xl bg-[linear-gradient(145deg,rgba(255,255,255,0.74),rgba(239,246,255,0.56))] dark:bg-[linear-gradient(145deg,rgba(12,24,42,0.8),rgba(30,64,175,0.08))] border border-blue-100/70 dark:border-blue-800/20 hover:border-blue-200 dark:hover:border-blue-800/40 transition-colors group backdrop-blur-xl' : 'flex items-center justify-between p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-800 hover:border-violet-200 dark:hover:border-violet-800 transition-colors group'}`}>
                     <div className="flex items-center gap-3">
-                      <div className="p-2 rounded bg-white dark:bg-gray-800 shadow-sm text-gray-400 group-hover:text-violet-500 transition-colors">
-                        <Archive size={16} />
-                      </div>
+                        <div className="p-2 rounded-xl bg-white/80 dark:bg-slate-800/70 shadow-sm text-gray-400 group-hover:text-blue-500 transition-colors border border-blue-100/60 dark:border-slate-700/60">
+                          <Archive size={16} />
+                        </div>
                       <div>
                         <p className="font-mono text-xs font-medium text-gray-700 dark:text-gray-300">{b.name}</p>
                         <p className="text-[10px] text-gray-400 mt-0.5">{new Date(b.time).toLocaleString('zh-CN')} · <span className="font-mono">{(b.size / 1024).toFixed(1)} KB</span></p>
@@ -1013,20 +971,20 @@ export default function SystemConfig() {
         <div className="space-y-6 animate-in fade-in slide-in-from-top-4 duration-200">
           {envLoading ? (
             <div className="flex flex-col items-center justify-center py-16 text-gray-400 gap-3">
-              <RefreshCw size={32} className="animate-spin text-violet-500/50" />
+              <RefreshCw size={32} className="animate-spin text-blue-500/50" />
               <p className="text-sm">检测运行环境中...</p>
             </div>
           ) : (
             <>
-              <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 p-6 space-y-4">
+              <div className={`${modern ? 'page-modern-panel p-6 space-y-4' : 'bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 p-6 space-y-4'}`}>
                 <h3 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                  <Monitor size={16} className="text-violet-500" /> 操作系统
+                  <Monitor size={16} className="text-blue-500" /> 操作系统
                 </h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-y-4 gap-x-6">
                   {[
                     ['平台', envInfo.os?.platform, 'bg-gray-100 dark:bg-gray-800'], 
                     ['架构', envInfo.os?.arch, 'bg-gray-100 dark:bg-gray-800'],
-                    ['发行版', envInfo.os?.distro, 'bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300'], 
+                    ['发行版', envInfo.os?.distro, 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'], 
                     ['内核', envInfo.os?.release, 'bg-gray-100 dark:bg-gray-800'],
                     ['主机名', envInfo.os?.hostname, 'bg-gray-100 dark:bg-gray-800'], 
                     ['用户', envInfo.os?.userInfo, 'bg-gray-100 dark:bg-gray-800'],
@@ -1048,15 +1006,15 @@ export default function SystemConfig() {
               <SoftwareEnvironment envInfo={envInfo} onRefresh={loadEnv} />
 
               {/* System Diagnose Report */}
-              <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 p-6 space-y-4">
+              <div className={`${modern ? 'page-modern-panel p-6 space-y-4' : 'bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 p-6 space-y-4'}`}>
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                    <FileText size={16} className="text-violet-500" /> 系统诊断报告
+                    <FileText size={16} className="text-blue-500" /> 系统诊断报告
                   </h3>
                   <div className="flex items-center gap-2">
                     {diagReport && (
                       <button onClick={() => { navigator.clipboard.writeText(diagReport); setMsg('已复制到剪贴板'); setTimeout(() => setMsg(''), 2000); }}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
+                        className={`${modern ? 'page-modern-action px-3 py-1.5 text-xs font-medium' : 'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors'}`}>
                         <Archive size={12} /> 复制报告
                       </button>
                     )}
@@ -1069,7 +1027,7 @@ export default function SystemConfig() {
                       } catch (err) { setMsg('诊断失败: ' + String(err)); }
                       finally { setDiagLoading(false); }
                     }} disabled={diagLoading}
-                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 transition-all shadow-sm">
+                      className={`${modern ? 'page-modern-accent px-3 py-1.5 text-xs font-medium disabled:opacity-50' : 'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 transition-all shadow-sm'}`}>
                       {diagLoading ? <RefreshCw size={12} className="animate-spin" /> : <Terminal size={12} />}
                       {diagLoading ? '生成中...' : '生成诊断报告'}
                     </button>
@@ -1091,13 +1049,13 @@ export default function SystemConfig() {
         <div className="space-y-6 animate-in fade-in slide-in-from-top-4 duration-200">
           {configCheckLoading ? (
             <div className="flex flex-col items-center justify-center py-16 text-gray-400 gap-3">
-              <RefreshCw size={32} className="animate-spin text-violet-500/50" />
+              <RefreshCw size={32} className="animate-spin text-blue-500/50" />
               <p className="text-sm">正在扫描配置文件...</p>
             </div>
           ) : (
             <>
               {/* Summary */}
-              <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 p-5">
+              <div className={`${modern ? 'page-modern-panel p-5' : 'bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 p-5'}`}>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4">
                     <div className={`p-3 rounded-xl ${configProblems === 0 ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600' : 'bg-amber-50 dark:bg-amber-900/20 text-amber-600'}`}>
@@ -1113,13 +1071,13 @@ export default function SystemConfig() {
                   <div className="flex items-center gap-2">
                     {configProblems > 0 && configIssues.some((i: any) => i.fixable) && (
                       <button onClick={handleFixAll} disabled={fixing}
-                        className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 transition-all shadow-sm">
+                        className={`${modern ? 'page-modern-accent px-4 py-2 text-xs font-medium disabled:opacity-50' : 'flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 transition-all shadow-sm'}`}>
                         {fixing ? <RefreshCw size={12} className="animate-spin" /> : <Command size={12} />}
                         {fixing ? '修复中...' : '一键修复全部'}
                       </button>
                     )}
-                    <button onClick={loadConfigCheck} disabled={configCheckLoading}
-                      className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 transition-colors">
+                      <button onClick={loadConfigCheck} disabled={configCheckLoading}
+                       className={`${modern ? 'page-modern-control px-3 py-2 text-xs font-medium' : 'flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 transition-colors'}`}>
                       <RefreshCw size={12} className={configCheckLoading ? 'animate-spin' : ''} />
                       重新检测
                     </button>
@@ -1131,7 +1089,7 @@ export default function SystemConfig() {
               {configIssues.length > 0 ? (
                 <div className="space-y-3">
                   {configIssues.map((issue: any) => (
-                    <div key={issue.id} className={`bg-white dark:bg-gray-800 rounded-xl shadow-sm border overflow-hidden transition-all ${
+                    <div key={issue.id} className={`${modern ? 'page-modern-panel overflow-hidden transition-all' : 'bg-white dark:bg-gray-800 rounded-xl shadow-sm border overflow-hidden transition-all'} ${
                       issue.severity === 'error' ? 'border-red-200 dark:border-red-800/30' :
                       issue.severity === 'warning' ? 'border-amber-200 dark:border-amber-800/30' :
                       'border-gray-100 dark:border-gray-700/50'
@@ -1167,7 +1125,7 @@ export default function SystemConfig() {
                         </div>
                         {issue.fixable && (
                           <button onClick={() => handleFixSingle(issue.id)} disabled={fixing}
-                            className="shrink-0 flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-lg bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400 hover:bg-violet-100 dark:hover:bg-violet-900/50 disabled:opacity-50 transition-colors">
+                            className={`${modern ? 'page-modern-action shrink-0 px-3 py-1.5 text-xs font-medium disabled:opacity-50' : 'shrink-0 flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-lg bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400 hover:bg-violet-100 dark:hover:bg-violet-900/50 disabled:opacity-50 transition-colors'}`}>
                             <Command size={12} />修复
                           </button>
                         )}
@@ -1189,16 +1147,16 @@ export default function SystemConfig() {
 
       {showDiffPreview && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
-          <div className="w-full max-w-4xl max-h-[88vh] overflow-hidden rounded-xl bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 shadow-xl flex flex-col">
+          <div className={`${modern ? 'w-full max-w-4xl max-h-[88vh] overflow-hidden rounded-[28px] bg-[linear-gradient(145deg,rgba(255,255,255,0.92),rgba(239,246,255,0.72))] dark:bg-[linear-gradient(145deg,rgba(12,24,42,0.92),rgba(30,64,175,0.14))] border border-blue-100/70 dark:border-blue-800/20 shadow-xl backdrop-blur-xl flex flex-col' : 'w-full max-w-4xl max-h-[88vh] overflow-hidden rounded-xl bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 shadow-xl flex flex-col'}`}>
             <div className="px-5 py-4 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between">
               <h3 className="text-sm font-bold text-gray-900 dark:text-white">保存前差异预览</h3>
-              <button onClick={() => setShowDiffPreview(false)} className="px-2 py-1 text-xs rounded bg-gray-100 dark:bg-gray-700">关闭</button>
+              <button onClick={() => setShowDiffPreview(false)} className={`${modern ? 'page-modern-action px-2.5 py-1.5 text-xs' : 'px-2 py-1 text-xs rounded bg-gray-100 dark:bg-gray-700'}`}>关闭</button>
             </div>
             <div className="p-4 overflow-y-auto space-y-2">
               <div className="text-xs text-gray-500">共检测到 {diffItems.length} 项变更，确认后将写入 <code className="font-mono">openclaw.json</code>。</div>
               {diffItems.slice(0, 200).map((item, idx) => (
                 <div key={idx} className="text-xs border border-gray-100 dark:border-gray-700 rounded-lg p-2">
-                  <div className="font-mono text-violet-600 dark:text-violet-300">{item.path}</div>
+                  <div className="font-mono text-blue-600 dark:text-blue-300">{item.path}</div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-1">
                     <div className="rounded bg-red-50 dark:bg-red-900/20 p-2">
                       <div className="text-[10px] text-red-500 mb-1">Before</div>
@@ -1216,8 +1174,8 @@ export default function SystemConfig() {
               )}
             </div>
             <div className="px-5 py-4 border-t border-gray-100 dark:border-gray-700 flex items-center justify-end gap-2">
-              <button onClick={() => setShowDiffPreview(false)} className="px-4 py-2 text-xs rounded bg-gray-100 dark:bg-gray-700">取消</button>
-              <button onClick={doSave} disabled={saving} className="px-4 py-2 text-xs rounded bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50">
+              <button onClick={() => setShowDiffPreview(false)} className={`${modern ? 'page-modern-action px-4 py-2 text-xs' : 'px-4 py-2 text-xs rounded bg-gray-100 dark:bg-gray-700'}`}>取消</button>
+              <button onClick={doSave} disabled={saving} className={`${modern ? 'page-modern-accent px-4 py-2 text-xs disabled:opacity-50' : 'px-4 py-2 text-xs rounded bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50'}`}>
                 {saving ? '保存中...' : '确认保存'}
               </button>
             </div>
@@ -1236,13 +1194,13 @@ function AdminPasswordField({ token, onCopy }: { token: string; onCopy: () => vo
     <div className="flex items-center gap-2">
       <div className="relative flex-1">
         <input type={visible ? 'text' : 'password'} readOnly value={token}
-          className="w-full pl-3 pr-10 py-2 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900 font-mono text-gray-600 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all" />
+          className="w-full pl-3 pr-10 py-2 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900 font-mono text-gray-600 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
         <button onClick={() => setVisible(!visible)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
           {visible ? <EyeOff size={14} /> : <Eye size={14} />}
         </button>
       </div>
       <button onClick={() => { navigator.clipboard.writeText(token); onCopy(); }}
-        className="px-3 py-2 text-xs font-medium rounded-lg bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400 hover:bg-violet-100 dark:hover:bg-violet-900/50 transition-colors border border-violet-100 dark:border-violet-800/30">
+        className="px-3 py-2 text-xs font-medium rounded-lg bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors border border-blue-100 dark:border-blue-800/30">
         复制
       </button>
     </div>
@@ -1282,10 +1240,10 @@ function SudoPasswordSection() {
   };
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 overflow-hidden">
+    <div className="page-modern-panel overflow-hidden">
       <div className="px-5 py-4 flex items-center justify-between border-b border-gray-100 dark:border-gray-800 bg-gray-50/30 dark:bg-gray-900/30">
         <div className="flex items-center gap-3">
-          <div className="p-1.5 rounded-lg bg-amber-100 dark:bg-amber-900/30 text-amber-600">
+          <div className="p-1.5 rounded-xl bg-amber-100/80 dark:bg-amber-900/20 text-amber-600 border border-amber-100/70 dark:border-amber-800/30">
             <Shield size={16} />
           </div>
           <div>
@@ -1307,7 +1265,7 @@ function SudoPasswordSection() {
               className="w-full pl-4 pr-4 py-2 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-all placeholder:text-gray-400" />
           </div>
           <button onClick={handleSave} disabled={saving || !pwd}
-            className="px-4 py-2 text-xs font-medium rounded-lg bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 shadow-sm transition-all hover:shadow-md hover:shadow-amber-200 dark:hover:shadow-none">
+            className="page-modern-warn px-4 py-2 text-xs font-medium disabled:opacity-50">
             {saving ? '保存中...' : '保存'}
           </button>
         </div>
@@ -1350,9 +1308,9 @@ function ChangePasswordSection() {
   };
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 overflow-hidden">
+    <div className="page-modern-panel overflow-hidden">
       <div className="px-5 py-4 flex items-center gap-3 border-b border-gray-100 dark:border-gray-800 bg-gray-50/30 dark:bg-gray-900/30">
-        <div className="p-1.5 rounded-lg bg-violet-100 dark:bg-violet-900/30 text-violet-600">
+        <div className="p-1.5 rounded-xl bg-blue-100/80 dark:bg-blue-900/20 text-blue-600 border border-blue-100/70 dark:border-blue-800/30">
           <Key size={16} />
         </div>
         <div>
@@ -1363,15 +1321,15 @@ function ChangePasswordSection() {
       <div className="p-5 space-y-3">
         <input type="password" value={oldPwd} onChange={e => setOldPwd(e.target.value)}
           placeholder={t.sysConfig?.currentPassword || '当前密码'}
-          className="w-full px-4 py-2 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all placeholder:text-gray-400" />
+          className="w-full px-4 py-2 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-gray-400" />
         <input type="password" value={newPwd} onChange={e => setNewPwd(e.target.value)}
           placeholder={t.sysConfig?.newPassword || '新密码'}
-          className="w-full px-4 py-2 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all placeholder:text-gray-400" />
+          className="w-full px-4 py-2 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-gray-400" />
         <input type="password" value={confirmPwd} onChange={e => setConfirmPwd(e.target.value)}
           placeholder={t.sysConfig?.confirmPassword || '确认新密码'}
-          className="w-full px-4 py-2 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all placeholder:text-gray-400" />
+          className="w-full px-4 py-2 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-gray-400" />
         <button onClick={handleChange} disabled={saving || !oldPwd || !newPwd || !confirmPwd}
-          className="w-full px-4 py-2.5 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 shadow-sm transition-all">
+          className="w-full px-4 py-2.5 text-xs font-medium page-modern-accent disabled:opacity-50">
           {saving ? '修改中...' : (t.sysConfig?.changePasswordBtn || '修改密码')}
         </button>
         {msg && (
@@ -1424,24 +1382,24 @@ function PanelUpdateSection() {
   };
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 p-6 space-y-5">
+    <div className="page-modern-panel p-6 space-y-5">
       <h3 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">
-        <Box size={16} className="text-violet-500" /> ClawPanel 版本更新
+        <Box size={16} className="text-blue-500" /> ClawPanel 版本更新
         <span className="text-[10px] font-mono text-gray-400 bg-gray-100 dark:bg-gray-900 px-2 py-0.5 rounded ml-1">{panelVersion || '...'}</span>
         <span className="text-[10px] text-gray-400 ml-auto">🛡️ 独立更新工具</span>
       </h3>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-gray-50 dark:bg-gray-900/50 rounded-xl p-4 border border-gray-100 dark:border-gray-800 flex items-center gap-4">
-          <div className="w-10 h-10 rounded-lg bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center shrink-0">
-            <Box size={20} className="text-violet-600 dark:text-violet-400" />
+        <div className="rounded-[22px] p-4 border border-blue-100/70 dark:border-blue-800/20 bg-[linear-gradient(145deg,rgba(255,255,255,0.78),rgba(239,246,255,0.58))] dark:bg-[linear-gradient(145deg,rgba(12,24,42,0.82),rgba(30,64,175,0.1))] flex items-center gap-4 backdrop-blur-xl">
+          <div className="w-10 h-10 rounded-xl bg-blue-100/80 dark:bg-blue-900/20 border border-blue-100/70 dark:border-blue-800/30 flex items-center justify-center shrink-0">
+            <Box size={20} className="text-blue-600 dark:text-blue-300" />
           </div>
           <div>
             <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">当前版本</p>
             <p className="text-base font-bold text-gray-900 dark:text-white font-mono mt-0.5">{panelVersion || '加载中...'}</p>
           </div>
         </div>
-        <div className="bg-gray-50 dark:bg-gray-900/50 rounded-xl p-4 border border-gray-100 dark:border-gray-800 flex items-center gap-4">
+        <div className="rounded-[22px] p-4 border border-blue-100/70 dark:border-blue-800/20 bg-[linear-gradient(145deg,rgba(255,255,255,0.78),rgba(239,246,255,0.58))] dark:bg-[linear-gradient(145deg,rgba(12,24,42,0.82),rgba(30,64,175,0.1))] flex items-center gap-4 backdrop-blur-xl">
           <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${panelUpdateInfo?.hasUpdate ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400' : panelUpdateInfo && !panelUpdateInfo.error ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400' : 'bg-gray-100 dark:bg-gray-800 text-gray-400'}`}>
             {panelUpdateInfo?.hasUpdate ? <AlertTriangle size={20} /> : panelUpdateInfo && !panelUpdateInfo.error ? <CheckCircle size={20} /> : <RefreshCw size={20} />}
           </div>
@@ -1450,7 +1408,7 @@ function PanelUpdateSection() {
             <p className="text-base font-bold text-gray-900 dark:text-white font-mono mt-0.5">{panelUpdateInfo?.latestVersion || '-'}</p>
           </div>
         </div>
-        <div className="bg-gray-50 dark:bg-gray-900/50 rounded-xl p-4 border border-gray-100 dark:border-gray-800 flex items-center gap-4">
+        <div className="rounded-[22px] p-4 border border-blue-100/70 dark:border-blue-800/20 bg-[linear-gradient(145deg,rgba(255,255,255,0.78),rgba(239,246,255,0.58))] dark:bg-[linear-gradient(145deg,rgba(12,24,42,0.82),rgba(30,64,175,0.1))] flex items-center gap-4 backdrop-blur-xl">
           <div className="w-10 h-10 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center shrink-0">
             <Shield size={20} className="text-blue-600 dark:text-blue-400" />
           </div>
@@ -1470,7 +1428,7 @@ function PanelUpdateSection() {
 
         {panelUpdateInfo?.hasUpdate && (
           <button onClick={goToUpdater} disabled={navigating}
-            className="flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 shadow-sm shadow-violet-200 dark:shadow-none transition-all hover:shadow-md disabled:opacity-50">
+          className="flex items-center gap-2 px-4 py-2 text-xs font-medium page-modern-accent disabled:opacity-50">
             {navigating ? <RefreshCw size={14} className="animate-spin" /> : <Package size={14} />}
             {navigating ? '正在跳转...' : '前往更新'}
           </button>
@@ -1690,10 +1648,10 @@ function CfgSection({ title, icon: Icon, fields, getVal, setVal }: {
 }) {
   const [expanded, setExpanded] = useState(false);
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 overflow-hidden transition-all hover:shadow-md">
+    <div className="page-modern-panel overflow-hidden transition-all hover:shadow-md">
       <button onClick={() => setExpanded(!expanded)}
         className="w-full flex items-center gap-4 px-5 py-4 text-left hover:bg-gray-50/50 dark:hover:bg-gray-700/20 transition-colors">
-        <div className={`p-2 rounded-lg transition-colors ${expanded ? 'bg-violet-100 dark:bg-violet-900/30 text-violet-600' : 'bg-gray-100 dark:bg-gray-800 text-gray-500'}`}>
+        <div className={`p-2 rounded-xl transition-colors border ${expanded ? 'bg-blue-100/80 dark:bg-blue-900/20 border-blue-100 dark:border-blue-800/30 text-blue-600' : 'bg-gray-100 dark:bg-gray-800 border-transparent text-gray-500'}`}>
           <Icon size={18} />
         </div>
         <div className="flex-1">
@@ -1715,21 +1673,21 @@ function CfgSection({ title, icon: Icon, fields, getVal, setVal }: {
               {field.type === 'toggle' ? (
                 <div className="flex items-center gap-3 p-3 rounded-lg border border-gray-100 dark:border-gray-800 bg-gray-50/30 dark:bg-gray-900/30">
                   <button onClick={() => setVal(field.path, !getVal(field.path))}
-                    className={`relative w-9 h-5 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-violet-500 ${getVal(field.path) ? 'bg-violet-600' : 'bg-gray-300 dark:bg-gray-600'}`}>
+                    className={`relative w-9 h-5 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-blue-500 ${getVal(field.path) ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'}`}>
                     <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${getVal(field.path) ? 'translate-x-4' : ''}`} />
                   </button>
-                  <span className={`text-xs font-medium ${getVal(field.path) ? 'text-violet-600 dark:text-violet-400' : 'text-gray-500'}`}>
+                  <span className={`text-xs font-medium ${getVal(field.path) ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500'}`}>
                     {getVal(field.path) ? '已启用' : '已禁用'}
                   </span>
                 </div>
               ) : field.type === 'textarea' ? (
                 <textarea value={getVal(field.path) || ''} onChange={e => setVal(field.path, e.target.value)}
                   placeholder={field.placeholder} rows={4}
-                  className="w-full px-3.5 py-2.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all resize-none font-mono leading-relaxed" />
+                  className="w-full px-3.5 py-2.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all resize-none font-mono leading-relaxed" />
               ) : field.type === 'select' ? (
                 <div className="relative">
                   <select value={getVal(field.path) || ''} onChange={e => setVal(field.path, e.target.value)}
-                    className="w-full px-3.5 py-2.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 appearance-none cursor-pointer">
+                    className="w-full px-3.5 py-2.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 appearance-none cursor-pointer">
                     <option value="">选择...</option>
                     {field.options?.map(o => <option key={o} value={o}>{o}</option>)}
                   </select>
@@ -1740,7 +1698,7 @@ function CfgSection({ title, icon: Icon, fields, getVal, setVal }: {
                   <input type={field.type === 'password' ? 'password' : field.type === 'number' ? 'number' : 'text'}
                     value={getVal(field.path) ?? ''} onChange={e => setVal(field.path, field.type === 'number' ? Number(e.target.value) : e.target.value)}
                     placeholder={field.placeholder}
-                    className="w-full px-3.5 py-2.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all placeholder:text-gray-400" />
+                    className="w-full px-3.5 py-2.5 text-xs border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-gray-400" />
                   {field.type === 'password' && (
                     <div className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
                       <Key size={14} />
@@ -1814,9 +1772,9 @@ function SoftwareEnvironment({ envInfo, onRefresh }: { envInfo: any; onRefresh: 
         const items = softwareList.filter(s => s.category === cat.key);
         if (items.length === 0) return null;
         return (
-          <div key={cat.key} className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 p-6 space-y-4">
+          <div key={cat.key} className="page-modern-panel p-6 space-y-4">
             <h3 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">
-              <cat.icon size={16} className="text-violet-500" /> {cat.label}
+              <cat.icon size={16} className="text-blue-500" /> {cat.label}
             </h3>
             <div className="space-y-3">
               {items.map(sw => {
@@ -1825,7 +1783,7 @@ function SoftwareEnvironment({ envInfo, onRefresh }: { envInfo: any; onRefresh: 
                 const isRunning = sw.status === 'running';
                 const installable = sw.installable !== false && !installed;
                 return (
-                  <div key={sw.id} className="flex items-center gap-4 px-4 py-3 rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-100 dark:border-gray-800 hover:border-violet-200 dark:hover:border-violet-800 transition-colors">
+                  <div key={sw.id} className="flex items-center gap-4 px-4 py-3 rounded-xl bg-[linear-gradient(145deg,rgba(255,255,255,0.74),rgba(239,246,255,0.56))] dark:bg-[linear-gradient(145deg,rgba(12,24,42,0.8),rgba(30,64,175,0.08))] border border-blue-100/70 dark:border-blue-800/20 hover:border-blue-200 dark:hover:border-blue-800/40 transition-colors backdrop-blur-xl">
                     <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${pluginMissing ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600' : installed ? (isRunning ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600' : 'bg-blue-100 dark:bg-blue-900/30 text-blue-600') : 'bg-gray-200 dark:bg-gray-700 text-gray-400'}`}>
                       {installed && !pluginMissing ? <CheckCircle size={16} /> : <AlertTriangle size={16} />}
                     </div>
@@ -1844,7 +1802,7 @@ function SoftwareEnvironment({ envInfo, onRefresh }: { envInfo: any; onRefresh: 
                       <button
                         onClick={() => handleInstall(sw.id)}
                         disabled={installing === sw.id}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 transition-all shadow-sm whitespace-nowrap"
+                        className="page-modern-accent px-3 py-1.5 text-xs font-medium disabled:opacity-50 whitespace-nowrap"
                       >
                         {installing === sw.id ? <RefreshCw size={12} className="animate-spin" /> : <Package size={12} />}
                         {installing === sw.id ? '安装中...' : '一键安装'}

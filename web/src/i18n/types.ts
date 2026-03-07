@@ -63,6 +63,7 @@ export interface Translations {
     activityLog: string;
     channels: string;
     skills: string;
+    agents: string;
     cronJobs: string;
     workspace: string;
     systemConfig: string;
