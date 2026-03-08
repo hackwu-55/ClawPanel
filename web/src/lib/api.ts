@@ -137,8 +137,16 @@ const _api = {
   createBackup: () => post('/system/backup'),
   getBackups: () => get('/system/backups'),
   restoreBackup: (backupName: string) => post('/system/restore', { backupName }),
-  getSkills: () => get('/system/skills'),
+  getSkills: (agentId?: string) => get('/system/skills' + (agentId ? `?agentId=${encodeURIComponent(agentId)}` : '')),
   syncClawHub: () => post('/system/clawhub-sync'),
+  searchClawHub: (query?: string, agentId?: string) => {
+    const params = new URLSearchParams();
+    if (query) params.set('q', query);
+    if (agentId) params.set('agentId', agentId);
+    const suffix = params.toString();
+    return get('/system/clawhub/search' + (suffix ? `?${suffix}` : ''));
+  },
+  installClawHubSkill: (skillId: string, agentId?: string) => post('/system/clawhub/install', { skillId, agentId }),
   getCronJobs: () => get('/system/cron'),
   updateCronJobs: (jobs: any[]) => put('/system/cron', { jobs }),
   getDocs: () => get('/system/docs'),
@@ -165,7 +173,7 @@ const _api = {
   getSudoPassword: () => get('/system/sudo-password'),
   setSudoPassword: (password: string) => put('/system/sudo-password', { password }),
   // Skill toggle
-  toggleSkill: (id: string, enabled: boolean) => put(`/system/skills/${id}/toggle`, { enabled }),
+  toggleSkill: (id: string, enabled: boolean, aliases?: string[]) => put(`/system/skills/${id}/toggle`, { enabled, aliases }),
   // Model health check
   checkModelHealth: (baseUrl: string, apiKey: string, apiType: string, modelId?: string) => post('/system/model-health', { baseUrl, apiKey, apiType, modelId }),
   // AI Assistant chat

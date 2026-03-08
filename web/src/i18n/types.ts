@@ -230,7 +230,11 @@ export interface Translations {
   skills: {
     title: string;
     subtitle: string;
+    description: string;
     refreshList: string;
+    localSkills: string;
+    plugins: string;
+    clawHub: string;
     installedTab: string;
     pluginsTab: string;
     clawHubTab: string;
@@ -240,6 +244,7 @@ export interface Translations {
     enabledFilter: string;
     disabledFilter: string;
     loadingSkills: string;
+    loadingClawHub: string;
     noMatch: string;
     noSkillsFound: string;
     clawHubTitle: string;
@@ -251,6 +256,8 @@ export interface Translations {
     syncDone: string;
     syncFailed: string;
     installHint: string;
+    installSuccess: string;
+    installFailed: string;
     configRequired: string;
     configRequirements: string;
     envVars: string;
@@ -261,8 +268,13 @@ export interface Translations {
     srcInstalled: string;
     srcDevExt: string;
     srcSkill: string;
+    srcManaged: string;
     srcAppSkill: string;
     srcWorkspace: string;
+    srcWorkspaceAgent: string;
+    srcGlobalAgent: string;
+    srcPluginSkill: string;
+    srcExtraDir: string;
     srcScript: string;
     srcConfig: string;
   };

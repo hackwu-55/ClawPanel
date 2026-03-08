@@ -19,6 +19,7 @@ interface SkillEntry {
   metadata?: any;
   requires?: { env?: string[]; bins?: string[] };
   path?: string;
+  skillKey?: string;
 }
 
 interface PluginEntry {
@@ -32,21 +33,16 @@ interface PluginEntry {
   path?: string;
 }
 
-const CLAWHUB_CATALOG: { id: string; name: string; description: string; descriptionZh?: string; version: string; category: string }[] = [
-  { id: 'feishu', name: '飞书 / Lark', description: 'Feishu/Lark bot channel via WebSocket', descriptionZh: '飞书机器人通道插件，支持 WebSocket 连接', version: '1.1.0', category: '通道' },
-  { id: 'qqbot', name: 'QQ 官方机器人', description: 'QQ Official Bot API plugin', descriptionZh: 'QQ开放平台官方Bot API插件', version: '1.2.3', category: '通道' },
-  { id: 'dingtalk', name: '钉钉', description: 'DingTalk robot channel plugin', descriptionZh: '钉钉机器人通道插件', version: '0.2.0', category: '通道' },
-  { id: 'wecom', name: '企业微信', description: 'WeCom (WeChat Work) app message plugin', descriptionZh: '企业微信应用消息通道插件', version: '2026.1.30', category: '通道' },
-  { id: 'msteams', name: 'Microsoft Teams', description: 'Bot Framework enterprise channel plugin', descriptionZh: 'Bot Framework 企业通道插件', version: '0.3.0', category: '通道' },
-  { id: 'mattermost', name: 'Mattermost', description: 'Mattermost Bot API + WebSocket plugin', descriptionZh: 'Mattermost Bot API + WebSocket 插件', version: '0.2.0', category: '通道' },
-  { id: 'line', name: 'LINE', description: 'LINE Messaging API channel plugin', descriptionZh: 'LINE Messaging API 通道插件', version: '0.1.0', category: '通道' },
-  { id: 'matrix', name: 'Matrix', description: 'Matrix protocol channel plugin', descriptionZh: 'Matrix 协议通道插件', version: '0.1.0', category: '通道' },
-  { id: 'nextcloud-talk', name: 'Nextcloud Talk', description: 'Nextcloud Talk self-hosted chat plugin', descriptionZh: 'Nextcloud Talk 自托管聊天插件', version: '0.1.0', category: '通道' },
-  { id: 'nostr', name: 'Nostr', description: 'Decentralized NIP-04 DM plugin', descriptionZh: '去中心化 NIP-04 DM 插件', version: '0.1.0', category: '通道' },
-  { id: 'twitch', name: 'Twitch', description: 'Twitch Chat via IRC plugin', descriptionZh: 'Twitch Chat via IRC 插件', version: '0.1.0', category: '通道' },
-  { id: 'tlon', name: 'Tlon', description: 'Urbit-based messenger plugin', descriptionZh: 'Urbit-based messenger 插件', version: '0.1.0', category: '通道' },
-  { id: 'zalo', name: 'Zalo', description: 'Zalo Bot API plugin', descriptionZh: 'Zalo Bot API 插件', version: '0.1.0', category: '通道' },
-];
+interface ClawHubSkill {
+  id: string;
+  name: string;
+  description: string;
+  version?: string;
+  installedVersion?: string;
+  category?: string;
+  author?: string;
+  installed?: boolean;
+}
 
 export default function Skills() {
   const { t } = useI18n();
@@ -54,7 +50,11 @@ export default function Skills() {
   const modern = uiMode === 'modern';
   const [skills, setSkills] = useState<SkillEntry[]>([]);
   const [plugins, setPlugins] = useState<PluginEntry[]>([]);
+  const [clawHubSkills, setClawHubSkills] = useState<ClawHubSkill[]>([]);
+  const [agents, setAgents] = useState<any[]>([]);
+  const [selectedAgent, setSelectedAgent] = useState<string>('');
   const [loading, setLoading] = useState(true);
+  const [hubLoading, setHubLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'enabled' | 'disabled'>('all');
   const [tab, setTab] = useState<'skills' | 'plugins' | 'clawhub'>('skills');
@@ -63,12 +63,28 @@ export default function Skills() {
   const [syncing, setSyncing] = useState(false);
   const [configSkill, setConfigSkill] = useState<SkillEntry | null>(null);
 
-  useEffect(() => { loadSkills(); }, []);
+  useEffect(() => { loadAgents(); }, []);
+  useEffect(() => { loadSkills(); }, [selectedAgent]);
+  useEffect(() => { if (tab === 'clawhub') loadClawHub(); }, [tab, selectedAgent]);
+
+  const loadAgents = async () => {
+    try {
+      const r = await api.getAgentsConfig();
+      if (r.ok && r.agents) {
+        const list = Array.isArray(r.agents?.list) ? r.agents.list : [];
+        const defaultAgent = typeof r.agents?.default === 'string' ? r.agents.default : '';
+        setAgents(list);
+        setSelectedAgent(prev => prev || defaultAgent || list[0]?.id || '');
+      }
+    } catch (err) {
+      console.error('Failed to load agents:', err);
+    }
+  };
 
   const loadSkills = async () => {
     setLoading(true);
     try {
-      const r = await api.getSkills();
+      const r = await api.getSkills(selectedAgent);
       if (r.ok) {
         setSkills(r.skills || []);
         setPlugins(r.plugins || []);
@@ -78,17 +94,31 @@ export default function Skills() {
     } finally { setLoading(false); }
   };
 
-  const toggleSkill = async (id: string) => {
-    const skill = skills.find(s => s.id === id);
+  const loadClawHub = async () => {
+    setHubLoading(true);
+    try {
+      const r = await api.searchClawHub(search, selectedAgent);
+      if (r.ok && r.skills) {
+        setClawHubSkills(r.skills || []);
+      }
+    } catch (err) {
+      console.error('Failed to load ClawHub:', err);
+    } finally { setHubLoading(false); }
+  };
+
+  const toggleSkill = async (skill: SkillEntry) => {
+    const key = skill.skillKey || skill.id;
+    if (!key) return;
     if (!skill) return;
     const newEnabled = !skill.enabled;
-    setSkills(prev => prev.map(s => s.id === id ? { ...s, enabled: newEnabled } : s));
+    setSkills(prev => prev.map(s => (s.skillKey || s.id) === key ? { ...s, enabled: newEnabled } : s));
     try {
-      await api.toggleSkill(id, newEnabled);
+      const aliases = skill.skillKey && skill.skillKey !== skill.id ? [skill.id] : undefined;
+      await api.toggleSkill(key, newEnabled, aliases);
       setMsg(`${skill.name} ${newEnabled ? t.common.enabled : t.common.disabled}`);
       setTimeout(() => setMsg(''), 2000);
     } catch {
-      setSkills(prev => prev.map(s => s.id === id ? { ...s, enabled: !newEnabled } : s));
+      setSkills(prev => prev.map(s => (s.skillKey || s.id) === key ? { ...s, enabled: !newEnabled } : s));
       setMsg(t.common.operationFailed);
       setTimeout(() => setMsg(''), 2000);
     }
@@ -110,30 +140,31 @@ export default function Skills() {
     }
   };
 
-  const installedIds = new Set(skills.map(s => s.id));
-  const hubFiltered = CLAWHUB_CATALOG.filter(s => {
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return s.id.includes(q) || s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q);
-  });
-
-  const handleSyncClawHub = async () => {
-    setSyncing(true);
-    try {
-      const r = await api.syncClawHub();
-      if (r.ok && r.skills) {
-        setMsg(t.skills.syncSuccess.replace('{n}', String(r.skills.length)));
-      } else {
-        setMsg(t.skills.syncDone);
-      }
-    } catch { setMsg(t.skills.syncFailed); }
-    finally { setSyncing(false); setTimeout(() => setMsg(''), 3000); }
+  const handleSearchClawHub = async () => {
+    if (tab === 'clawhub') {
+      loadClawHub();
+    }
   };
 
-  const handleInstallHint = (id: string) => {
-    setInstalling(id);
-    setMsg(t.skills.installHint.replace('{id}', id));
-    setTimeout(() => setInstalling(''), 3000);
+  const handleInstallSkill = async (skillId: string) => {
+    setInstalling(skillId);
+    try {
+      const r = await api.installClawHubSkill(skillId, selectedAgent);
+      if (r.ok) {
+        setMsg(t.skills.installSuccess.replace('{id}', skillId));
+        // Refresh local skills
+        await loadSkills();
+        // Refresh ClawHub to update install status
+        await loadClawHub();
+      } else {
+        setMsg(t.skills.installFailed.replace('{id}', skillId));
+      }
+    } catch (err) {
+      setMsg(t.skills.installFailed.replace('{id}', skillId));
+    } finally {
+      setInstalling('');
+      setTimeout(() => setMsg(''), 3000);
+    }
   };
 
   const filtered = skills.filter(s => {
@@ -146,17 +177,26 @@ export default function Skills() {
     return true;
   });
 
+  const hubFiltered = clawHubSkills.filter(s => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return s.id.toLowerCase().includes(q) || s.name.toLowerCase().includes(q) || (s.description || '').toLowerCase().includes(q);
+  });
+
   const getSourceBadge = (source: string) => {
     const badges: Record<string, { label: string; color: string }> = {
       installed: { label: t.skills.srcInstalled, color: 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300' },
       'config-ext': { label: t.skills.srcDevExt, color: 'bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300' },
       skill: { label: t.skills.srcSkill, color: 'bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300' },
+      managed: { label: t.skills.srcManaged, color: 'bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300' },
       'app-skill': { label: t.skills.srcAppSkill, color: 'bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300' },
-      workspace: { label: t.skills.srcWorkspace, color: 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300' },
-      script: { label: t.skills.srcScript, color: 'bg-pink-100 dark:bg-pink-950 text-pink-700 dark:text-pink-300' },
-      config: { label: t.skills.srcConfig, color: 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400' },
+      workspace: { label: t.skills.srcWorkspace, color: 'bg-teal-100 dark:bg-teal-950 text-teal-700 dark:text-teal-300' },
+      'workspace-agent': { label: t.skills.srcWorkspaceAgent, color: 'bg-cyan-100 dark:bg-cyan-950 text-cyan-700 dark:text-cyan-300' },
+      'global-agent': { label: t.skills.srcGlobalAgent, color: 'bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300' },
+      'plugin-skill': { label: t.skills.srcPluginSkill, color: 'bg-violet-100 dark:bg-violet-950 text-violet-700 dark:text-violet-300' },
+      'extra-dir': { label: t.skills.srcExtraDir, color: 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300' },
     };
-    const badge = badges[source] || { label: source, color: 'bg-gray-100 dark:bg-gray-800 text-gray-600' };
+    const badge = badges[source] || { label: source, color: 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400' };
     return <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${badge.color}`}>{badge.label}</span>;
   };
 
@@ -168,6 +208,14 @@ export default function Skills() {
           <p className={`${modern ? 'page-modern-subtitle' : 'text-sm text-gray-500 mt-1'}`}>{t.skills.subtitle}</p>
         </div>
         <MobileActionTray label={t.skills.refreshList}>
+          {agents.length > 0 && (
+            <select value={selectedAgent} onChange={e => setSelectedAgent(e.target.value)}
+              className="px-3 py-2 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all">
+              {agents.map(a => (
+                <option key={a.id} value={a.id}>{a.id}</option>
+              ))}
+            </select>
+          )}
           <button onClick={loadSkills} className={`${modern ? 'page-modern-action' : 'flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors shadow-sm'}`}>
             <RefreshCw size={14} />{t.skills.refreshList}
           </button>
@@ -186,7 +234,7 @@ export default function Skills() {
         </button>
         <button onClick={() => setTab('clawhub')}
           className={`${modern ? 'px-3.5 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 border' : 'pb-3 text-sm font-medium border-b-2 transition-all flex items-center gap-2'} ${tab === 'clawhub' ? (modern ? 'border-blue-100/80 bg-blue-50/85 dark:bg-blue-900/20 dark:border-blue-800/40 text-blue-700 dark:text-blue-300 shadow-sm' : 'border-violet-600 text-violet-700 dark:text-violet-400') : (modern ? 'border-transparent text-gray-500 hover:bg-white/70 dark:hover:bg-slate-800/70 hover:text-gray-700 dark:hover:text-gray-300' : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300')}`}>
-          <Globe size={16} />{t.skills.clawHubTab} <span className="bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-xs px-1.5 py-0.5 rounded-full">{CLAWHUB_CATALOG.length}</span>
+          <Globe size={16} />{t.skills.clawHubTab} <span className="bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-xs px-1.5 py-0.5 rounded-full">{clawHubSkills.length}</span>
         </button>
       </div>
 
@@ -250,7 +298,7 @@ export default function Skills() {
                           {t.skills.configRequired}
                         </button>
                       )}
-                      <button onClick={() => toggleSkill(skill.id)} className="relative group/toggle focus:outline-none shrink-0" title={skill.enabled ? t.common.running : t.common.stopped}>
+                        <button onClick={() => toggleSkill(skill)} className="relative group/toggle focus:outline-none shrink-0" title={skill.enabled ? t.common.running : t.common.stopped}>
                         {skill.enabled 
                           ? <ToggleRight size={36} className="text-emerald-500 transition-transform group-hover/toggle:scale-105" /> 
                           : <ToggleLeft size={36} className="text-gray-300 dark:text-gray-600 transition-transform group-hover/toggle:scale-105" />}
@@ -322,10 +370,10 @@ export default function Skills() {
               </div>
             </div>
             <div className="flex gap-2">
-              <button onClick={handleSyncClawHub} disabled={syncing}
+              <button onClick={handleSearchClawHub} disabled={hubLoading}
                 className={`${modern ? 'page-modern-action' : 'flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 shadow-sm transition-colors'}`}>
-                {syncing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                {syncing ? t.skills.syncing : t.skills.syncStore}
+                {hubLoading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                {hubLoading ? t.skills.syncing : t.skills.syncStore}
               </button>
               <a href="https://clawhub.ai/skills?sort=downloads" target="_blank" rel="noopener noreferrer"
                 className={`${modern ? 'page-modern-accent' : 'flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 shadow-sm shadow-violet-200 dark:shadow-none transition-colors'}`}>
@@ -336,62 +384,78 @@ export default function Skills() {
 
           <div className="relative">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder={t.skills.searchClawHub}
-              className="w-full pl-9 pr-4 py-2.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all" />
+            <input value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSearchClawHub()} placeholder={t.skills.searchClawHub}
+              className="w-full pl-9 pr-10 py-2.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all" />
+            <button onClick={handleSearchClawHub} className="absolute right-3 top-1/2 -translate-y-1/2 text-violet-600 hover:text-violet-700">
+              <Search size={14} />
+            </button>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {hubFiltered.length === 0 ? (
-              <div className="col-span-full flex flex-col items-center justify-center py-16 text-gray-400 border-2 border-dashed border-gray-100 dark:border-gray-800 rounded-xl">
-                <Package size={32} className="opacity-20 mb-2" />
-                <p className="text-sm">{t.skills.noSkillsFound}</p>
-              </div>
-            ) : hubFiltered.map(skill => {
-              const isInstalled = installedIds.has(skill.id);
-              return (
-                <div key={skill.id} className={`${modern ? 'relative overflow-hidden rounded-[24px] p-4 border border-white/65 dark:border-slate-700/50 bg-[linear-gradient(145deg,rgba(255,255,255,0.84),rgba(239,246,255,0.62))] dark:bg-[linear-gradient(145deg,rgba(15,23,42,0.88),rgba(30,64,175,0.10))] shadow-[0_18px_40px_rgba(15,23,42,0.06)] backdrop-blur-xl flex flex-col h-full' : 'bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-700/50 flex flex-col h-full'} hover:shadow-md transition-all group`}>
-                  {modern && <div className="pointer-events-none absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-white/90 to-transparent dark:via-slate-200/20" />}
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex items-center gap-3">
-                       <div className="w-10 h-10 rounded-xl bg-[linear-gradient(135deg,rgba(37,99,235,0.12),rgba(14,165,233,0.08))] dark:bg-[linear-gradient(135deg,rgba(37,99,235,0.2),rgba(14,165,233,0.12))] flex items-center justify-center shrink-0 border border-blue-100/80 dark:border-blue-800/30 shadow-sm">
-                         <Globe size={18} className="text-blue-600 dark:text-blue-400" />
-                       </div>
-                      <div>
-                        <h4 className="text-sm font-bold text-gray-900 dark:text-white line-clamp-1" title={skill.name}>{skill.name}</h4>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-500 font-mono">v{skill.version}</span>
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-50 dark:bg-cyan-900/30 text-cyan-600 dark:text-cyan-400">{skill.category}</span>
+          {hubLoading ? (
+            <div className="flex flex-col items-center justify-center py-16 text-gray-400 gap-3">
+              <Loader2 size={32} className="animate-spin text-violet-500/50" />
+              <p className="text-sm">{t.skills.loadingClawHub}</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {hubFiltered.length === 0 ? (
+                <div className="col-span-full flex flex-col items-center justify-center py-16 text-gray-400 border-2 border-dashed border-gray-100 dark:border-gray-800 rounded-xl">
+                  <Package size={32} className="opacity-20 mb-2" />
+                  <p className="text-sm">{t.skills.noSkillsFound}</p>
+                </div>
+              ) : hubFiltered.map(skill => {
+                const isInstalled = skill.installed;
+                const isInstalling = installing === skill.id;
+                return (
+                  <div key={skill.id} className={`${modern ? 'relative overflow-hidden rounded-[24px] p-4 border border-white/65 dark:border-slate-700/50 bg-[linear-gradient(145deg,rgba(255,255,255,0.84),rgba(239,246,255,0.62))] dark:bg-[linear-gradient(145deg,rgba(15,23,42,0.88),rgba(30,64,175,0.10))] shadow-[0_18px_40px_rgba(15,23,42,0.06)] backdrop-blur-xl flex flex-col h-full' : 'bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border border-gray-100 dark:border-gray-700/50 flex flex-col h-full'} hover:shadow-md transition-all group`}>
+                    {modern && <div className="pointer-events-none absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-white/90 to-transparent dark:via-slate-200/20" />}
+                    <div className="flex items-start justify-between mb-3">
+                      <div className="flex items-center gap-3 flex-1 min-w-0">
+                        <div className={`${modern ? 'w-10 h-10 rounded-xl bg-[linear-gradient(135deg,rgba(37,99,235,0.12),rgba(14,165,233,0.08))] dark:bg-[linear-gradient(135deg,rgba(37,99,235,0.2),rgba(14,165,233,0.12))] flex items-center justify-center shrink-0 border border-blue-100/80 dark:border-blue-800/30 shadow-sm' : 'w-10 h-10 rounded-lg bg-gradient-to-br from-blue-50 to-cyan-50 dark:from-blue-900/30 dark:to-cyan-900/30 flex items-center justify-center shrink-0 border border-blue-100 dark:border-blue-800/30'}`}>
+                          <Globe size={18} className="text-blue-600 dark:text-blue-400" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h4 className="text-sm font-bold text-gray-900 dark:text-white truncate" title={skill.name}>{skill.name}</h4>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            {skill.version && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-500 font-mono">v{skill.version}</span>}
+                            {skill.installed && skill.installedVersion && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 font-mono">
+                                {t.common.installed} v{skill.installedVersion}
+                              </span>
+                            )}
+                            {skill.category && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-50 dark:bg-cyan-900/30 text-cyan-600 dark:text-cyan-400">{skill.category}</span>}
+                          </div>
                         </div>
                       </div>
                     </div>
+
+                    <div className="flex-1 mb-4">
+                      <p className="text-xs text-gray-500 line-clamp-3 mb-1" title={skill.description}>{skill.description}</p>
+                      {skill.author && <p className="text-xs text-gray-400 dark:text-gray-500 mt-2">by {skill.author}</p>}
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-3 border-t border-gray-50 dark:border-gray-800">
+                      <a href={`https://clawhub.ai/skills/${skill.id}`} target="_blank" rel="noopener noreferrer"
+                        className={`${modern ? 'page-modern-action p-2' : 'p-2 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors'}`} title="在 ClawHub 查看详情">
+                        <ExternalLink size={16} />
+                      </a>
+                      {isInstalled ? (
+                        <button disabled className={`${modern ? 'page-modern-success flex-1 py-2 text-xs' : 'flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 cursor-default'}`}>
+                          <Check size={14} />{t.common.installed}
+                        </button>
+                      ) : (
+                        <button onClick={() => handleInstallSkill(skill.id)} disabled={isInstalling}
+                          className={`${modern ? 'page-modern-accent flex-1 py-2 text-xs' : 'flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium rounded-lg bg-violet-600 dark:bg-violet-500 text-white hover:bg-violet-700 dark:hover:bg-violet-600 disabled:opacity-50 transition-colors'}`}>
+                          {isInstalling ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                          {t.common.install}
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  
-                  <div className="flex-1 mb-4">
-                    <p className="text-xs text-gray-500 line-clamp-2 mb-1" title={skill.description}>{skill.description}</p>
-                    {skill.descriptionZh && <p className="text-xs text-gray-400 dark:text-gray-500 line-clamp-2">{skill.descriptionZh}</p>}
-                  </div>
-                  
-                  <div className="flex items-center gap-2 pt-3 border-t border-gray-50 dark:border-gray-800">
-                     <a href={`https://clawhub.ai/skills/${skill.id}`} target="_blank" rel="noopener noreferrer"
-                       className={`${modern ? 'page-modern-action p-2' : 'p-2 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors'}`} title="在 ClawHub 查看详情">
-                       <ExternalLink size={16} />
-                     </a>
-                     {isInstalled ? (
-                       <button disabled className={`${modern ? 'page-modern-success flex-1 py-2 text-xs' : 'flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 cursor-default'}`}>
-                         <Check size={14} />{t.common.installed}
-                       </button>
-                     ) : (
-                       <button onClick={() => handleInstallHint(skill.id)} disabled={installing === skill.id}
-                         className={`${modern ? 'page-modern-accent flex-1 py-2 text-xs' : 'flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium rounded-lg bg-gray-900 dark:bg-white text-white dark:text-gray-900 hover:bg-gray-800 dark:hover:bg-gray-100 disabled:opacity-50 transition-colors'}`}>
-                         {installing === skill.id ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-                         {t.common.install}
-                       </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

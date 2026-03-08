@@ -436,8 +436,37 @@ Authorization: Bearer <token>
 ### GET `/api/system/skills`
 获取已安装技能列表。
 
+**查询参数：**
+- `agentId`（可选）：按指定 Agent 工作区解析 Skills；省略时使用当前默认 Agent。
+
+**返回要点：**
+- `agentId`：实际使用的 Agent ID
+- `workspace`：该 Agent 对应的工作区路径
+- `skills`：按 OpenClaw 官方优先级聚合后的技能列表，包含 `skillKey`、`source`、`requires`、`metadata`
+- `plugins`：已发现的插件列表
+
+### GET `/api/system/clawhub/search`
+通过 ClawHub 官方公开 API 搜索或浏览公开技能。
+
+**查询参数：**
+- `q`（可选）：搜索关键词；为空时返回热门公开技能
+- `agentId`（可选）：用于标记当前 Agent 工作区下已安装的 ClawHub 技能
+- `limit`（可选）：返回条数上限，默认 30，最大 100
+
+### POST `/api/system/clawhub/install`
+将指定 ClawHub 技能安装到目标 Agent 工作区的 `skills/` 目录，并同步写入工作区 `.clawhub/lock.json` 与技能目录 `.clawhub/origin.json`。
+
+**请求体：**
+```json
+{
+  "skillId": "weather",
+  "agentId": "main",
+  "version": "1.1.0"
+}
+```
+
 ### POST `/api/system/clawhub-sync`
-同步 ClawHub 商店技能列表。
+兼容旧版接口，返回缓存化的 ClawHub 商店技能列表。
 
 ### GET `/api/system/cron`
 获取定时任务列表。

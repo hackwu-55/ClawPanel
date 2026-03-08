@@ -1,0 +1,755 @@
+package handler
+
+import (
+	"archive/zip"
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/zhaoxinyi02/ClawPanel/internal/config"
+)
+
+var clawHubHTTPClient = &http.Client{Timeout: 20 * time.Second}
+var clawHubSlugRegexp = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+const (
+	maxClawHubArchiveBytes   int64 = 32 << 20
+	maxClawHubArchiveEntries       = 512
+	maxClawHubEntryBytes     int64 = 8 << 20
+	maxClawHubExtractedBytes int64 = 64 << 20
+)
+
+type clawHubSkillItem struct {
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Description      string `json:"description"`
+	Version          string `json:"version,omitempty"`
+	Installed        bool   `json:"installed"`
+	InstalledVersion string `json:"installedVersion,omitempty"`
+	UpdatedAt        int64  `json:"updatedAt,omitempty"`
+}
+
+type clawHubLockFile struct {
+	Version int                         `json:"version"`
+	Skills  map[string]clawHubLockEntry `json:"skills"`
+}
+
+type clawHubLockEntry struct {
+	Version     string `json:"version,omitempty"`
+	InstalledAt int64  `json:"installedAt"`
+}
+
+type clawHubOriginFile struct {
+	Registry         string `json:"registry"`
+	Slug             string `json:"slug"`
+	InstalledVersion string `json:"installedVersion"`
+	InstalledAt      int64  `json:"installedAt"`
+}
+
+type clawHubSearchResponse struct {
+	Results []struct {
+		Slug        string `json:"slug"`
+		DisplayName string `json:"displayName"`
+		Summary     string `json:"summary"`
+		Version     string `json:"version"`
+		UpdatedAt   int64  `json:"updatedAt"`
+	} `json:"results"`
+}
+
+type clawHubExploreResponse struct {
+	Items []struct {
+		Slug          string `json:"slug"`
+		DisplayName   string `json:"displayName"`
+		Summary       string `json:"summary"`
+		UpdatedAt     int64  `json:"updatedAt"`
+		LatestVersion *struct {
+			Version string `json:"version"`
+		} `json:"latestVersion"`
+	} `json:"items"`
+}
+
+type clawHubSkillResponse struct {
+	Skill *struct {
+		Slug        string `json:"slug"`
+		DisplayName string `json:"displayName"`
+		Summary     string `json:"summary"`
+		Moderation  *struct {
+			IsMalwareBlocked bool `json:"isMalwareBlocked"`
+		} `json:"moderation"`
+	} `json:"skill"`
+	LatestVersion *struct {
+		Version string `json:"version"`
+	} `json:"latestVersion"`
+}
+
+// SearchClawHub searches the official ClawHub API and annotates installed status for the selected workspace.
+func SearchClawHub(cfg *config.Config) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		query := strings.TrimSpace(c.Query("q"))
+		agentID, err := resolveRequestedAgentID(cfg, c.Query("agentId"))
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+		limit := 30
+		if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+			if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+				if parsed > 100 {
+					parsed = 100
+				}
+				limit = parsed
+			}
+		}
+
+		workdir := resolveSkillsWorkspace(cfg, agentID)
+		if err := ensureClawHubStatePath(workdir); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+		installed := readInstalledClawHubState(workdir)
+
+		items, err := fetchClawHubItems(query, limit)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+		for i := range items {
+			if state, ok := installed[items[i].ID]; ok {
+				items[i].Installed = true
+				items[i].InstalledVersion = state.Version
+			}
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"ok":      true,
+			"agentId": agentID,
+			"skills":  items,
+		})
+	}
+}
+
+// InstallClawHubSkill installs a public ClawHub skill into the selected agent workspace.
+func InstallClawHubSkill(cfg *config.Config) gin.HandlerFunc {
+	type reqBody struct {
+		SkillID string `json:"skillId"`
+		AgentID string `json:"agentId"`
+		Version string `json:"version,omitempty"`
+	}
+	return func(c *gin.Context) {
+		var req reqBody
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+		slug := sanitizeClawHubSlug(req.SkillID)
+		if slug == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "invalid skillId"})
+			return
+		}
+		agentID, err := resolveRequestedAgentID(cfg, req.AgentID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+		workdir := resolveSkillsWorkspace(cfg, agentID)
+		if workdir == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "workspace not configured"})
+			return
+		}
+		skillDir := filepath.Join(workdir, "skills", slug)
+		if err := ensureClawHubInstallTarget(workdir, skillDir); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+		if info, err := os.Stat(skillDir); err == nil && info.IsDir() {
+			c.JSON(http.StatusConflict, gin.H{"ok": false, "error": fmt.Sprintf("skill %s is already installed", slug)})
+			return
+		}
+
+		meta, err := fetchClawHubSkill(slug)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+		if meta.Skill != nil && meta.Skill.Moderation != nil && meta.Skill.Moderation.IsMalwareBlocked {
+			c.JSON(http.StatusForbidden, gin.H{"ok": false, "error": fmt.Sprintf("skill %s is blocked by ClawHub moderation", slug)})
+			return
+		}
+		version := strings.TrimSpace(req.Version)
+		if version == "" && meta.LatestVersion != nil {
+			version = strings.TrimSpace(meta.LatestVersion.Version)
+		}
+		if version == "" {
+			c.JSON(http.StatusBadGateway, gin.H{"ok": false, "error": fmt.Sprintf("unable to resolve latest version for %s", slug)})
+			return
+		}
+
+		archiveBytes, err := downloadClawHubArchive(slug, version)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+		if err := extractClawHubArchive(skillDir, archiveBytes); err != nil {
+			_ = os.RemoveAll(skillDir)
+			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+
+		installedAt := time.Now().UnixMilli()
+		if err := writeClawHubOrigin(skillDir, slug, version, installedAt); err != nil {
+			_ = os.RemoveAll(skillDir)
+			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+		if err := updateClawHubLock(workdir, slug, version, installedAt); err != nil {
+			_ = os.RemoveAll(skillDir)
+			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"ok":      true,
+			"agentId": agentID,
+			"skillId": slug,
+			"version": version,
+			"path":    skillDir,
+		})
+	}
+}
+
+func fetchClawHubItems(query string, limit int) ([]clawHubSkillItem, error) {
+	if strings.TrimSpace(query) == "" {
+		resp, err := clawHubHTTPClient.Get(clawHubRegistryBase() + "/api/v1/skills?limit=" + strconv.Itoa(limit) + "&sort=downloads")
+		if err != nil {
+			return nil, fmt.Errorf("search clawhub: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			return nil, fmt.Errorf("search clawhub: %s", strings.TrimSpace(string(body)))
+		}
+		var payload clawHubExploreResponse
+		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+			return nil, fmt.Errorf("decode clawhub explore response: %w", err)
+		}
+		items := make([]clawHubSkillItem, 0, len(payload.Items))
+		for _, item := range payload.Items {
+			version := ""
+			if item.LatestVersion != nil {
+				version = strings.TrimSpace(item.LatestVersion.Version)
+			}
+			items = append(items, clawHubSkillItem{
+				ID:          item.Slug,
+				Name:        firstNonEmpty(item.DisplayName, item.Slug),
+				Description: item.Summary,
+				Version:     version,
+				UpdatedAt:   item.UpdatedAt,
+			})
+		}
+		return items, nil
+	}
+
+	values := url.Values{}
+	values.Set("q", query)
+	values.Set("limit", strconv.Itoa(limit))
+	resp, err := clawHubHTTPClient.Get(clawHubRegistryBase() + "/api/v1/search?" + values.Encode())
+	if err != nil {
+		return nil, fmt.Errorf("search clawhub: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("search clawhub: %s", strings.TrimSpace(string(body)))
+	}
+	var payload clawHubSearchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, fmt.Errorf("decode clawhub search response: %w", err)
+	}
+	items := make([]clawHubSkillItem, 0, len(payload.Results))
+	for _, item := range payload.Results {
+		items = append(items, clawHubSkillItem{
+			ID:          item.Slug,
+			Name:        firstNonEmpty(item.DisplayName, item.Slug),
+			Description: item.Summary,
+			Version:     item.Version,
+			UpdatedAt:   item.UpdatedAt,
+		})
+	}
+	return items, nil
+}
+
+func fetchClawHubSkill(slug string) (*clawHubSkillResponse, error) {
+	resp, err := clawHubHTTPClient.Get(clawHubRegistryBase() + "/api/v1/skills/" + url.PathEscape(slug))
+	if err != nil {
+		return nil, fmt.Errorf("get clawhub skill %s: %w", slug, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("get clawhub skill %s: %s", slug, strings.TrimSpace(string(body)))
+	}
+	var payload clawHubSkillResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, fmt.Errorf("decode clawhub skill %s: %w", slug, err)
+	}
+	return &payload, nil
+}
+
+func downloadClawHubArchive(slug, version string) ([]byte, error) {
+	values := url.Values{}
+	values.Set("slug", slug)
+	if strings.TrimSpace(version) != "" {
+		values.Set("version", version)
+	}
+	resp, err := clawHubHTTPClient.Get(clawHubRegistryBase() + "/api/v1/download?" + values.Encode())
+	if err != nil {
+		return nil, fmt.Errorf("download clawhub skill %s: %w", slug, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("download clawhub skill %s: %s", slug, strings.TrimSpace(string(body)))
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxClawHubArchiveBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read clawhub download %s: %w", slug, err)
+	}
+	if int64(len(body)) > maxClawHubArchiveBytes {
+		return nil, fmt.Errorf("download clawhub skill %s: archive too large", slug)
+	}
+	return body, nil
+}
+
+func extractClawHubArchive(targetDir string, archiveBytes []byte) error {
+	reader, err := zip.NewReader(bytes.NewReader(archiveBytes), int64(len(archiveBytes)))
+	if err != nil {
+		return fmt.Errorf("open clawhub archive: %w", err)
+	}
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return fmt.Errorf("create skill dir: %w", err)
+	}
+	if len(reader.File) > maxClawHubArchiveEntries {
+		return fmt.Errorf("archive contains too many files")
+	}
+	wrapperPrefix := detectClawHubArchivePrefix(reader.File)
+	var totalWritten int64
+	foundSkillFile := false
+	for _, file := range reader.File {
+		relPath := normalizeClawHubArchivePath(file.Name)
+		if relPath == "." || relPath == "" || strings.HasPrefix(relPath, "__MACOSX"+string(os.PathSeparator)) {
+			continue
+		}
+		if wrapperPrefix != "" {
+			if relPath == wrapperPrefix {
+				continue
+			}
+			if strings.HasPrefix(relPath, wrapperPrefix+string(os.PathSeparator)) {
+				relPath = strings.TrimPrefix(relPath, wrapperPrefix+string(os.PathSeparator))
+			}
+		}
+		if relPath == "" {
+			continue
+		}
+		targetPath := filepath.Join(targetDir, relPath)
+		if !strings.HasPrefix(targetPath, targetDir+string(os.PathSeparator)) && targetPath != targetDir {
+			return fmt.Errorf("invalid archive path: %s", file.Name)
+		}
+		if file.FileInfo().IsDir() {
+			if err := os.MkdirAll(targetPath, 0755); err != nil {
+				return fmt.Errorf("create extracted dir: %w", err)
+			}
+			continue
+		}
+		if file.UncompressedSize64 > uint64(maxClawHubEntryBytes) {
+			return fmt.Errorf("archive entry too large: %s", file.Name)
+		}
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+			return fmt.Errorf("create extracted parent: %w", err)
+		}
+		rc, err := file.Open()
+		if err != nil {
+			return fmt.Errorf("open archive entry %s: %w", file.Name, err)
+		}
+		mode := file.Mode()
+		if mode == 0 {
+			mode = 0644
+		}
+		dst, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode.Perm())
+		if err != nil {
+			_ = rc.Close()
+			return fmt.Errorf("create extracted file %s: %w", file.Name, err)
+		}
+		limited := &io.LimitedReader{R: rc, N: maxClawHubEntryBytes + 1}
+		written, copyErr := io.Copy(dst, limited)
+		closeErr := dst.Close()
+		_ = rc.Close()
+		if written > maxClawHubEntryBytes {
+			return fmt.Errorf("archive entry too large: %s", file.Name)
+		}
+		totalWritten += written
+		if totalWritten > maxClawHubExtractedBytes {
+			return fmt.Errorf("archive extracted size exceeds limit")
+		}
+		if copyErr != nil {
+			return fmt.Errorf("write extracted file %s: %w", file.Name, copyErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close extracted file %s: %w", file.Name, closeErr)
+		}
+		if relPath == "SKILL.md" {
+			foundSkillFile = true
+		}
+		if err := os.Chmod(targetPath, mode.Perm()); err != nil {
+			return fmt.Errorf("write extracted file %s: %w", file.Name, err)
+		}
+	}
+	if !foundSkillFile {
+		return fmt.Errorf("archive does not contain SKILL.md")
+	}
+	return nil
+}
+
+func readInstalledClawHubState(workdir string) map[string]clawHubLockEntry {
+	installed := map[string]clawHubLockEntry{}
+	lock, err := readClawHubLock(workdir)
+	if err == nil && lock.Skills != nil {
+		for slug, entry := range lock.Skills {
+			installed[slug] = entry
+		}
+	}
+	skillsDir := filepath.Join(workdir, "skills")
+	entries, err := os.ReadDir(skillsDir)
+	if err != nil {
+		return installed
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		slug := entry.Name()
+		if _, ok := installed[slug]; ok {
+			continue
+		}
+		installed[slug] = readClawHubOriginEntry(filepath.Join(skillsDir, slug))
+	}
+	return installed
+}
+
+func readClawHubLock(workdir string) (*clawHubLockFile, error) {
+	raw, err := os.ReadFile(filepath.Join(workdir, ".clawhub", "lock.json"))
+	if err != nil {
+		return nil, err
+	}
+	var payload struct {
+		Version int                       `json:"version"`
+		Skills  map[string]map[string]any `json:"skills"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, err
+	}
+	lock := &clawHubLockFile{Version: payload.Version, Skills: map[string]clawHubLockEntry{}}
+	if lock.Version == 0 {
+		lock.Version = 1
+	}
+	for slug, entry := range payload.Skills {
+		lockEntry := clawHubLockEntry{}
+		if version := strings.TrimSpace(fmt.Sprint(entry["version"])); version != "" && version != "<nil>" {
+			lockEntry.Version = version
+		}
+		switch v := entry["installedAt"].(type) {
+		case float64:
+			lockEntry.InstalledAt = int64(v)
+		case int64:
+			lockEntry.InstalledAt = v
+		case int:
+			lockEntry.InstalledAt = int64(v)
+		case string:
+			if parsed, err := strconv.ParseInt(v, 10, 64); err == nil {
+				lockEntry.InstalledAt = parsed
+			}
+		}
+		lock.Skills[slug] = lockEntry
+	}
+	return lock, nil
+}
+
+func updateClawHubLock(workdir, slug, version string, installedAt int64) error {
+	lock, err := readClawHubLock(workdir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		lock = &clawHubLockFile{Version: 1, Skills: map[string]clawHubLockEntry{}}
+	}
+	if lock.Skills == nil {
+		lock.Skills = map[string]clawHubLockEntry{}
+	}
+	lock.Skills[slug] = clawHubLockEntry{Version: version, InstalledAt: installedAt}
+	if err := os.MkdirAll(filepath.Join(workdir, ".clawhub"), 0755); err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(lock, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(workdir, ".clawhub", "lock.json"), raw, 0644)
+}
+
+func writeClawHubOrigin(skillDir, slug, version string, installedAt int64) error {
+	originDir := filepath.Join(skillDir, ".clawhub")
+	if err := os.MkdirAll(originDir, 0755); err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(clawHubOriginFile{
+		Registry:         clawHubRegistryBase(),
+		Slug:             slug,
+		InstalledVersion: version,
+		InstalledAt:      installedAt,
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(originDir, "origin.json"), raw, 0644)
+}
+
+func readClawHubOriginEntry(skillDir string) clawHubLockEntry {
+	raw, err := os.ReadFile(filepath.Join(skillDir, ".clawhub", "origin.json"))
+	if err != nil {
+		return clawHubLockEntry{}
+	}
+	var payload clawHubOriginFile
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return clawHubLockEntry{}
+	}
+	return clawHubLockEntry{
+		Version:     strings.TrimSpace(payload.InstalledVersion),
+		InstalledAt: payload.InstalledAt,
+	}
+}
+
+func clawHubRegistryBase() string {
+	for _, key := range []string{"CLAWHUB_REGISTRY", "CLAWHUB_SITE"} {
+		if value := strings.TrimRight(strings.TrimSpace(os.Getenv(key)), "/"); value != "" {
+			return value
+		}
+	}
+	return "https://clawhub.ai"
+}
+
+func sanitizeClawHubSlug(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "." || value == ".." {
+		return ""
+	}
+	if strings.Contains(value, "/") || strings.Contains(value, "\\") {
+		return ""
+	}
+	if filepath.Base(value) != value || filepath.Clean(value) != value {
+		return ""
+	}
+	if !clawHubSlugRegexp.MatchString(value) {
+		return ""
+	}
+	return value
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func ensureClawHubInstallTarget(workdir, skillDir string) error {
+	if err := ensureClawHubStatePath(workdir); err != nil {
+		return err
+	}
+	for _, path := range []struct {
+		value      string
+		finalIsDir bool
+	}{
+		{value: workdir, finalIsDir: true},
+		{value: filepath.Join(workdir, "skills"), finalIsDir: true},
+		{value: skillDir, finalIsDir: true},
+	} {
+		if err := ensureExistingPathChainSafe(path.value, path.finalIsDir); err != nil {
+			return err
+		}
+	}
+	realWorkdir, err := resolveExistingRealPath(workdir)
+	if err != nil {
+		return fmt.Errorf("resolve workspace path: %w", err)
+	}
+	for _, path := range []string{workdir, filepath.Join(workdir, "skills"), skillDir} {
+		if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing to install into symlinked path %s", path)
+		}
+	}
+	for _, path := range []string{filepath.Join(workdir, "skills"), skillDir} {
+		realPath, err := resolveExistingRealPath(path)
+		if err != nil {
+			return fmt.Errorf("resolve install path: %w", err)
+		}
+		if !pathWithinBase(realWorkdir, realPath) {
+			return fmt.Errorf("install path escapes workspace")
+		}
+	}
+	return nil
+}
+
+func ensureClawHubStatePath(workdir string) error {
+	if err := ensureExistingPathChainSafe(workdir, true); err != nil {
+		return err
+	}
+	realWorkdir, err := resolveExistingRealPath(workdir)
+	if err != nil {
+		return fmt.Errorf("resolve workspace path: %w", err)
+	}
+	for _, path := range []struct {
+		value      string
+		finalIsDir bool
+	}{
+		{value: filepath.Join(workdir, ".clawhub"), finalIsDir: true},
+		{value: filepath.Join(workdir, ".clawhub", "lock.json"), finalIsDir: false},
+	} {
+		if err := ensureExistingPathChainSafe(path.value, path.finalIsDir); err != nil {
+			return err
+		}
+	}
+	for _, path := range []string{filepath.Join(workdir, ".clawhub"), filepath.Join(workdir, ".clawhub", "lock.json")} {
+		if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing to use symlinked ClawHub state path %s", path)
+		}
+		realPath, err := resolveExistingRealPath(path)
+		if err != nil {
+			return fmt.Errorf("resolve ClawHub state path: %w", err)
+		}
+		if !pathWithinBase(realWorkdir, realPath) {
+			return fmt.Errorf("ClawHub state path escapes workspace")
+		}
+	}
+	return nil
+}
+
+func ensureExistingPathChainSafe(path string, finalIsDir bool) error {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	volume := filepath.VolumeName(absPath)
+	current := volume + string(os.PathSeparator)
+	trimmed := absPath
+	if volume != "" {
+		trimmed = strings.TrimPrefix(trimmed, volume)
+	}
+	trimmed = strings.TrimPrefix(trimmed, string(os.PathSeparator))
+	if info, err := os.Lstat(current); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to use symlinked path %s", current)
+	}
+	segments := strings.Split(trimmed, string(os.PathSeparator))
+	for index, segment := range segments {
+		if segment == "" {
+			continue
+		}
+		current = filepath.Join(current, segment)
+		info, err := os.Lstat(current)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing to use symlinked path %s", current)
+		}
+		if index < len(segments)-1 && !info.IsDir() {
+			return fmt.Errorf("path component is not a directory: %s", current)
+		}
+		if index == len(segments)-1 && finalIsDir && !info.IsDir() {
+			return fmt.Errorf("path component is not a directory: %s", current)
+		}
+	}
+	return nil
+}
+
+func resolveExistingRealPath(path string) (string, error) {
+	cleaned := filepath.Clean(path)
+	if cleaned == "" {
+		return "", fmt.Errorf("empty path")
+	}
+	trailing := make([]string, 0)
+	current := cleaned
+	for {
+		if _, err := os.Lstat(current); err == nil {
+			real, err := filepath.EvalSymlinks(current)
+			if err != nil {
+				return "", err
+			}
+			for i := len(trailing) - 1; i >= 0; i-- {
+				real = filepath.Join(real, trailing[i])
+			}
+			return filepath.Clean(real), nil
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", fmt.Errorf("no existing parent for %s", path)
+		}
+		trailing = append(trailing, filepath.Base(current))
+		current = parent
+	}
+}
+
+func pathWithinBase(base, target string) bool {
+	rel, err := filepath.Rel(base, target)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
+}
+
+func detectClawHubArchivePrefix(files []*zip.File) string {
+	prefix := ""
+	for _, file := range files {
+		relPath := normalizeClawHubArchivePath(file.Name)
+		if relPath == "" || strings.HasPrefix(relPath, "__MACOSX"+string(os.PathSeparator)) {
+			continue
+		}
+		first, rest, found := strings.Cut(relPath, string(os.PathSeparator))
+		if !found {
+			return ""
+		}
+		if rest == "" {
+			return ""
+		}
+		if prefix == "" {
+			prefix = first
+			continue
+		}
+		if prefix != first {
+			return ""
+		}
+	}
+	return prefix
+}
+
+func normalizeClawHubArchivePath(name string) string {
+	relPath := filepath.Clean(strings.ReplaceAll(name, "\\", "/"))
+	relPath = strings.TrimPrefix(relPath, "/")
+	for strings.HasPrefix(relPath, "../") {
+		relPath = strings.TrimPrefix(relPath, "../")
+	}
+	return relPath
+}

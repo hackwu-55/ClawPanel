@@ -14,13 +14,19 @@ const FAKE_LOGS = [
 ];
 
 const FAKE_SKILLS = [
-  { id: 'web-search', name: 'Web Search', description: '联网搜索能力，支持Google/Bing/DuckDuckGo', enabled: true, source: 'app-skill', version: '1.2.0', requires: { env: ['SEARCH_API_KEY'], bins: [] } },
-  { id: 'image-gen', name: 'Image Generation', description: 'AI图像生成，支持DALL-E/Stable Diffusion', enabled: true, source: 'app-skill', version: '1.0.3', requires: { env: ['OPENAI_API_KEY'], bins: [] } },
-  { id: 'code-runner', name: 'Code Runner', description: '安全沙箱代码执行，支持Python/JS/Shell', enabled: true, source: 'skill', version: '0.9.1', requires: { env: [], bins: ['python3', 'node'] } },
-  { id: 'weather', name: 'Weather', description: '天气查询插件，支持全球城市', enabled: true, source: 'installed', version: '1.1.0' },
-  { id: 'translator', name: 'Translator', description: '多语言翻译，支持100+语言', enabled: false, source: 'installed', version: '0.8.0' },
-  { id: 'reminder', name: 'Reminder', description: '定时提醒功能', enabled: true, source: 'workspace', version: '0.5.0' },
-  { id: 'knowledge-base', name: 'Knowledge Base', description: 'RAG知识库检索', enabled: false, source: 'config-ext', version: '1.0.0', requires: { env: ['EMBEDDING_API_KEY'], bins: [] } },
+  { id: 'web-search', skillKey: 'web-search', name: 'Web Search', description: '联网搜索能力，支持Google/Bing/DuckDuckGo', enabled: true, source: 'app-skill', version: '1.2.0', requires: { env: ['SEARCH_API_KEY'], bins: [] } },
+  { id: 'image-gen', skillKey: 'image-gen', name: 'Image Generation', description: 'AI图像生成，支持DALL-E/Stable Diffusion', enabled: true, source: 'app-skill', version: '1.0.3', requires: { env: ['OPENAI_API_KEY'], bins: [] } },
+  { id: 'code-runner', skillKey: 'code-runner', name: 'Code Runner', description: '安全沙箱代码执行，支持Python/JS/Shell', enabled: true, source: 'managed', version: '0.9.1', requires: { env: [], bins: ['python3', 'node'] } },
+  { id: 'weather', skillKey: 'weather', name: 'Weather', description: '天气查询插件，支持全球城市', enabled: true, source: 'managed', version: '1.1.0' },
+  { id: 'translator', skillKey: 'translator', name: 'Translator', description: '多语言翻译，支持100+语言', enabled: false, source: 'managed', version: '0.8.0' },
+  { id: 'reminder', skillKey: 'reminder', name: 'Reminder', description: '定时提醒功能', enabled: true, source: 'workspace', version: '0.5.0' },
+  { id: 'knowledge-base', skillKey: 'knowledge-base', name: 'Knowledge Base', description: 'RAG知识库检索', enabled: false, source: 'extra-dir', version: '1.0.0', requires: { env: ['EMBEDDING_API_KEY'], bins: [] } },
+];
+
+const FAKE_CLAWHUB_SKILLS = [
+  { id: 'weather', name: 'Weather', description: '官方天气查询技能', version: '1.1.0', installed: true, installedVersion: '1.1.0' },
+  { id: 'jira-helper', name: 'Jira Helper', description: '读取与总结 Jira 工单上下文', version: '0.6.2', installed: false },
+  { id: 'feishu-notes', name: 'Feishu Notes', description: '将结果整理并发送到飞书文档', version: '0.4.5', installed: false },
 ];
 
 const FAKE_CRON_JOBS = [
@@ -271,8 +277,36 @@ export const mockApi = {
     { name: 'backup-2026-02-16-080000.json', size: '2.0 KB', createdAt: new Date(Date.now() - 172800000).toISOString() },
   ] }; },
   restoreBackup: async () => { await delay(500); return { ok: true }; },
-  getSkills: async () => { await delay(200); return { ok: true, skills: FAKE_SKILLS }; },
+  getSkills: async (_agentId?: string) => {
+    await delay(200);
+    return {
+      ok: true,
+      agentId: _agentId || FAKE_AGENTS.default,
+      workspace: (_agentId && FAKE_AGENTS.list.find(agent => agent.id === _agentId)?.workspace) || FAKE_AGENTS.list[0]?.workspace || '',
+      skills: JSON.parse(JSON.stringify(FAKE_SKILLS)),
+      plugins: [
+        { id: 'telegram', name: 'Telegram Bridge', description: 'Telegram 通道插件', enabled: true, path: '/demo/plugins/telegram', source: 'installed' },
+        { id: 'calendar', name: 'Calendar Tools', description: '日历与提醒插件', enabled: false, path: '/demo/plugins/calendar', source: 'config-ext' },
+      ],
+    };
+  },
   syncClawHub: async () => { await delay(800); return { ok: true, skills: [] }; },
+  searchClawHub: async (query?: string, _agentId?: string) => {
+    await delay(500);
+    const q = (query || '').toLowerCase();
+    const skills = q
+      ? FAKE_CLAWHUB_SKILLS.filter(skill =>
+          skill.id.toLowerCase().includes(q) ||
+          skill.name.toLowerCase().includes(q) ||
+          skill.description.toLowerCase().includes(q),
+        )
+      : FAKE_CLAWHUB_SKILLS;
+    return { ok: true, skills: JSON.parse(JSON.stringify(skills)) };
+  },
+  installClawHubSkill: async (skillId: string, _agentId?: string) => {
+    await delay(800);
+    return { ok: true, skillId, agentId: _agentId || FAKE_AGENTS.default, version: '1.0.0' };
+  },
   getCronJobs: async () => { await delay(200); return { ok: true, jobs: FAKE_CRON_JOBS }; },
   updateCronJobs: async () => { await delay(300); return { ok: true }; },
   getDocs: async () => { await delay(200); return { ok: true, docs: [{ name: 'system-prompt.md', path: 'system-prompt.md', content: '# System Prompt\n\nYou are OpenClaw, a helpful AI assistant.' }] }; },
@@ -289,6 +323,7 @@ export const mockApi = {
   getAdminToken: async () => { await delay(100); return { ok: true, token: 'demo-admin-token' }; },
   getSudoPassword: async () => { await delay(100); return { ok: true, password: '' }; },
   setSudoPassword: async () => { await delay(200); return { ok: true }; },
+  toggleSkill: async (_id: string, _enabled: boolean) => { await delay(200); return { ok: true }; },
   getEvents: async () => { await delay(200); return { ok: true, events: FAKE_LOGS }; },
   clearEvents: async () => { await delay(100); return { ok: true }; },
   getTasks: async () => { await delay(80); return { ok: true, tasks: [] }; },
