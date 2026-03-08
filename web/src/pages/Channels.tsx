@@ -1586,7 +1586,7 @@ export default function Channels() {
               {/* 飞书双版本选择器 */}
               {currentDef.id === 'feishu' && (
                 <div className="rounded-xl border border-violet-200 dark:border-violet-800 bg-violet-50/50 dark:bg-violet-900/10 p-4 space-y-3">
-                  <div className="text-sm font-semibold text-gray-900 dark:text-white">当前飞书实现</div>
+                  <div className="text-sm font-semibold text-gray-900 dark:text-white">当前飞书通道版本</div>
                   <div className="flex flex-col sm:flex-row gap-3">
                     <label className={`flex-1 flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all ${
                       getActiveFeishuVariant(ocConfig) === 'official'
@@ -1599,7 +1599,17 @@ export default function Channels() {
                         className="mt-0.5 accent-violet-600" />
                       <div>
                         <div className="text-sm font-medium text-gray-900 dark:text-white">飞书官方版</div>
-                        <div className="text-[11px] text-gray-500 mt-0.5">支持用户身份授权、文档/日历/任务操作、流式卡片、话题独立上下文</div>
+                        <div className="text-[11px] text-gray-500 mt-0.5">
+                          支持用户身份授权、文档/日历/任务操作、流式卡片、话题独立上下文，需要先
+                          <a
+                            href="https://bytedance.larkoffice.com/docx/MFK7dDFLFoVlOGxWCv5cTXKmnMh"
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-violet-700 underline decoration-violet-400 underline-offset-2 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200"
+                          >
+                            手动安装飞书官方插件
+                          </a>
+                        </div>
                       </div>
                     </label>
                     <label className={`flex-1 flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all ${
