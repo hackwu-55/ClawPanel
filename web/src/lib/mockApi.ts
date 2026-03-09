@@ -202,6 +202,17 @@ export const mockApi = {
         feishuSessionKeys: ['agent:main:feishu:dm:ou_demo'],
         hasSharedMainSessionKey: false,
         mainSessionKey: 'agent:main:main',
+        pendingPairingCount: 0,
+        authorizedSenderCount: 2,
+        authorizedSenders: [
+          {
+            accountId: 'default',
+            accountConfigured: true,
+            senderCount: 2,
+            senderIds: ['ou_demo_a', 'ou_demo_b'],
+            sourceFiles: ['/Users/demo/.openclaw/credentials/feishu-default-allowFrom.json'],
+          },
+        ],
       },
     };
   },

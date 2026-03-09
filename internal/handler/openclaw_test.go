@@ -402,6 +402,97 @@ func TestGetFeishuDMDiagnosisScansAllAgents(t *testing.T) {
 	}
 }
 
+func TestGetFeishuDMDiagnosisReadsAuthorizedSenders(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	dir := t.TempDir()
+	cfg := &config.Config{OpenClawDir: dir}
+
+	rawConfig, _ := json.Marshal(map[string]interface{}{
+		"channels": map[string]interface{}{
+			"feishu": map[string]interface{}{
+				"defaultAccount": "default",
+				"accounts": map[string]interface{}{
+					"default": map[string]interface{}{"appId": "cli_default"},
+					"fly":     map[string]interface{}{"appId": "cli_fly"},
+				},
+				"dmPolicy": "pairing",
+			},
+		},
+	})
+	if err := os.WriteFile(filepath.Join(dir, "openclaw.json"), rawConfig, 0644); err != nil {
+		t.Fatalf("write openclaw.json: %v", err)
+	}
+
+	credentialsDir := filepath.Join(dir, "credentials")
+	if err := os.MkdirAll(credentialsDir, 0755); err != nil {
+		t.Fatalf("mkdir credentials: %v", err)
+	}
+
+	writeJSON := func(path string, value map[string]interface{}) {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			t.Fatalf("marshal %s: %v", path, err)
+		}
+		if err := os.WriteFile(path, raw, 0644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	writeJSON(filepath.Join(credentialsDir, "feishu-default-allowFrom.json"), map[string]interface{}{
+		"version":   1,
+		"allowFrom": []interface{}{"ou_default_scoped"},
+	})
+	writeJSON(filepath.Join(credentialsDir, "feishu-allowFrom.json"), map[string]interface{}{
+		"version":   1,
+		"allowFrom": []interface{}{"ou_default_legacy"},
+	})
+	writeJSON(filepath.Join(credentialsDir, "feishu-fly-allowFrom.json"), map[string]interface{}{
+		"version":   1,
+		"allowFrom": []interface{}{"ou_fly"},
+	})
+	writeJSON(filepath.Join(credentialsDir, "feishu-pairing.json"), map[string]interface{}{
+		"version": 1,
+		"requests": []interface{}{
+			map[string]interface{}{"id": "ou_pending", "code": "ABCD1234"},
+		},
+	})
+
+	diagnosis := buildFeishuDMDiagnosis(cfg)
+	if diagnosis.PendingPairingCount != 1 {
+		t.Fatalf("expected pending pairing count 1, got %d", diagnosis.PendingPairingCount)
+	}
+	if diagnosis.AuthorizedSenderCount != 3 {
+		t.Fatalf("expected authorized sender count 3, got %d", diagnosis.AuthorizedSenderCount)
+	}
+	if len(diagnosis.AuthorizedSenders) != 2 {
+		t.Fatalf("expected 2 authorized sender buckets, got %#v", diagnosis.AuthorizedSenders)
+	}
+
+	defaultBucket := diagnosis.AuthorizedSenders[0]
+	if defaultBucket.AccountID != "default" {
+		t.Fatalf("expected first bucket default, got %#v", defaultBucket)
+	}
+	if defaultBucket.SenderCount != 2 {
+		t.Fatalf("expected default sender count 2, got %#v", defaultBucket)
+	}
+	if len(defaultBucket.SenderIDs) != 2 || !strings.Contains(strings.Join(defaultBucket.SenderIDs, ","), "ou_default_scoped") || !strings.Contains(strings.Join(defaultBucket.SenderIDs, ","), "ou_default_legacy") {
+		t.Fatalf("unexpected default sender ids: %#v", defaultBucket.SenderIDs)
+	}
+	if len(defaultBucket.SourceFiles) != 2 {
+		t.Fatalf("expected default source files to include scoped and legacy stores, got %#v", defaultBucket.SourceFiles)
+	}
+
+	flyBucket := diagnosis.AuthorizedSenders[1]
+	if flyBucket.AccountID != "fly" || flyBucket.SenderCount != 1 {
+		t.Fatalf("unexpected fly bucket: %#v", flyBucket)
+	}
+	if len(flyBucket.SenderIDs) != 1 || flyBucket.SenderIDs[0] != "ou_fly" {
+		t.Fatalf("unexpected fly sender ids: %#v", flyBucket.SenderIDs)
+	}
+}
+
 func TestPatchModelsJSONForAgentUsesConfiguredAgentDir(t *testing.T) {
 	t.Parallel()
 

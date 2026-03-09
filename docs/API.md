@@ -206,6 +206,8 @@ Authorization: Bearer <token>
 - 运行时 `sessions.json` 中检测到的飞书会话键
 - 是否仍存在共享主会话键（例如 `agent:main:main`）
 - 是否误写了 `channels.feishu.dmScope`
+- `credentials/feishu-pairing.json` 中的待审批请求数量
+- `credentials/feishu-*-allowFrom.json` 中每个账号已授权的 OpenID 列表
 
 ### GET `/api/openclaw/agents`
 获取多智能体配置与统计信息（`defaults` / `default` / `list` / `bindings`）。
