@@ -18,6 +18,8 @@ import (
 //  3. 旧版面板曾把默认 Agent 写成 agents.default，需要迁移为 agents.list[].default。
 //  4. 旧版 Agents 表单曾写入 Codex 风格 sandbox.mode（workspace-write/read-only/
 //     danger-full-access），需要迁移为当前 OpenClaw sandbox schema。
+//  5. 旧版面板曾错误写入 agents.list[].contextTokens / compaction，
+//     但当前 OpenClaw schema 不支持单 Agent 级上下文覆盖，需要清理。
 func NormalizeOpenClawConfig(cfg map[string]interface{}) bool {
 	return normalizeOpenClawConfig(cfg, "")
 }
@@ -136,6 +138,14 @@ func normalizeOpenClawConfig(cfg map[string]interface{}, openClawDir string) boo
 				item, ok := raw.(map[string]interface{})
 				if !ok || item == nil {
 					continue
+				}
+				if _, ok := item["contextTokens"]; ok {
+					delete(item, "contextTokens")
+					changed = true
+				}
+				if _, ok := item["compaction"]; ok {
+					delete(item, "compaction")
+					changed = true
 				}
 				if sandbox, ok := item["sandbox"].(map[string]interface{}); ok && sandbox != nil {
 					if normalizeSandboxConfig(sandbox) {

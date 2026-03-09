@@ -187,25 +187,3 @@ func validateOpenClawNumericConfig(ocCfg map[string]interface{}) error {
 	}
 	return nil
 }
-
-func validateAgentContextConfig(agent map[string]interface{}) error {
-	if agent == nil {
-		return nil
-	}
-	if err := validateNumericField(agent["contextTokens"], numericFieldConstraint{
-		label:   "contextTokens",
-		integer: true,
-		min:     float64Ptr(1),
-	}); err != nil {
-		return err
-	}
-	compaction, _ := agent["compaction"].(map[string]interface{})
-	if err := validateNumericField(getNestedMapValue(map[string]interface{}{"compaction": compaction}, "compaction", "maxHistoryShare"), numericFieldConstraint{
-		label: "compaction.maxHistoryShare",
-		min:   float64Ptr(0),
-		max:   float64Ptr(1),
-	}); err != nil {
-		return err
-	}
-	return nil
-}

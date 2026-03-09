@@ -144,6 +144,105 @@ func TestWriteOpenClawJSONNormalizesLegacyAgentModelFields(t *testing.T) {
 	}
 }
 
+func TestNormalizeOpenClawConfigDropsUnsupportedPerAgentContextOverrides(t *testing.T) {
+	t.Parallel()
+
+	input := map[string]interface{}{
+		"agents": map[string]interface{}{
+			"defaults": map[string]interface{}{
+				"contextTokens": 200000,
+				"compaction": map[string]interface{}{
+					"mode": "safeguard",
+				},
+			},
+			"list": []interface{}{
+				map[string]interface{}{
+					"id":            "main",
+					"contextTokens": 4096,
+					"compaction": map[string]interface{}{
+						"mode":            "safeguard",
+						"maxHistoryShare": 0.5,
+					},
+				},
+			},
+		},
+	}
+
+	if changed := NormalizeOpenClawConfig(input); !changed {
+		t.Fatalf("NormalizeOpenClawConfig should report changes when dropping unsupported per-agent context overrides")
+	}
+
+	agents, _ := input["agents"].(map[string]interface{})
+	defaults, _ := agents["defaults"].(map[string]interface{})
+	if got := defaults["contextTokens"]; got != 200000 {
+		t.Fatalf("expected agents.defaults.contextTokens to stay intact, got %#v", got)
+	}
+	if _, ok := defaults["compaction"]; !ok {
+		t.Fatalf("expected agents.defaults.compaction to stay intact")
+	}
+
+	list, _ := agents["list"].([]interface{})
+	if len(list) != 1 {
+		t.Fatalf("expected one agent, got %#v", list)
+	}
+	item, _ := list[0].(map[string]interface{})
+	if _, ok := item["contextTokens"]; ok {
+		t.Fatalf("expected unsupported per-agent contextTokens to be removed, got %#v", item["contextTokens"])
+	}
+	if _, ok := item["compaction"]; ok {
+		t.Fatalf("expected unsupported per-agent compaction to be removed, got %#v", item["compaction"])
+	}
+}
+
+func TestNormalizeOpenClawJSONFileRewritesUnsupportedPerAgentContextOverrides(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cfg := &Config{OpenClawDir: dir}
+	raw := `{
+  "agents": {
+    "list": [
+      {
+        "id": "main",
+        "contextTokens": 4096,
+        "compaction": {
+          "mode": "safeguard",
+          "maxHistoryShare": 0.5
+        }
+      }
+    ]
+  }
+}`
+	if err := os.WriteFile(filepath.Join(dir, "openclaw.json"), []byte(raw), 0644); err != nil {
+		t.Fatalf("write openclaw.json: %v", err)
+	}
+
+	changed, err := cfg.NormalizeOpenClawJSONFile()
+	if err != nil {
+		t.Fatalf("NormalizeOpenClawJSONFile failed: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected NormalizeOpenClawJSONFile to rewrite unsupported per-agent context overrides")
+	}
+
+	saved, err := cfg.ReadOpenClawJSON()
+	if err != nil {
+		t.Fatalf("ReadOpenClawJSON failed: %v", err)
+	}
+	agents, _ := saved["agents"].(map[string]interface{})
+	list, _ := agents["list"].([]interface{})
+	if len(list) != 1 {
+		t.Fatalf("expected one agent, got %#v", list)
+	}
+	item, _ := list[0].(map[string]interface{})
+	if _, ok := item["contextTokens"]; ok {
+		t.Fatalf("expected contextTokens to be removed from saved file, got %#v", item["contextTokens"])
+	}
+	if _, ok := item["compaction"]; ok {
+		t.Fatalf("expected compaction to be removed from saved file, got %#v", item["compaction"])
+	}
+}
+
 func TestWriteOpenClawJSONNormalizesLegacyAgentSandboxModes(t *testing.T) {
 	t.Parallel()
 

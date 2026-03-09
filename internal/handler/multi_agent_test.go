@@ -1466,58 +1466,63 @@ func TestUpdateOpenClawAgentPreservesLegacyIdentityFields(t *testing.T) {
 	}
 }
 
-func TestUpdateOpenClawAgentRejectsInvalidContextConfig(t *testing.T) {
+func TestUpdateOpenClawAgentDropsUnsupportedPerAgentContextOverrides(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
 
-	tests := []struct {
-		name string
-		body string
-		want string
-	}{
-		{
-			name: "invalid context tokens",
-			body: `{"contextTokens":0}`,
-			want: "contextTokens",
-		},
-		{
-			name: "invalid history share",
-			body: `{"compaction":{"maxHistoryShare":1.2}}`,
-			want: "compaction.maxHistoryShare",
-		},
-	}
-
-	for _, tc := range tests {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			dir := t.TempDir()
-			cfg := &config.Config{OpenClawDir: dir}
-			writeJSON(t, filepath.Join(dir, "openclaw.json"), map[string]interface{}{
-				"agents": map[string]interface{}{
-					"default": "main",
-					"list": []interface{}{
-						map[string]interface{}{"id": "main", "default": true},
-						map[string]interface{}{"id": "work", "name": "Work"},
+	dir := t.TempDir()
+	cfg := &config.Config{OpenClawDir: dir}
+	writeJSON(t, filepath.Join(dir, "openclaw.json"), map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main", "default": true},
+				map[string]interface{}{
+					"id":            "work",
+					"name":          "Work",
+					"contextTokens": 4096,
+					"compaction": map[string]interface{}{
+						"mode":            "safeguard",
+						"maxHistoryShare": 0.5,
 					},
 				},
-			})
+			},
+		},
+	})
 
-			r := gin.New()
-			r.PUT("/openclaw/agents/:id", UpdateOpenClawAgent(cfg))
-			req := httptest.NewRequest(http.MethodPut, "/openclaw/agents/work", bytes.NewReader([]byte(tc.body)))
-			req.Header.Set("Content-Type", "application/json")
-			w := httptest.NewRecorder()
-			r.ServeHTTP(w, req)
+	r := gin.New()
+	r.PUT("/openclaw/agents/:id", UpdateOpenClawAgent(cfg))
+	req := httptest.NewRequest(http.MethodPut, "/openclaw/agents/work", bytes.NewReader([]byte(`{"name":"Renamed Work","contextTokens":8192,"compaction":{"mode":"default","maxHistoryShare":0.6}}`)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
 
-			if w.Code != http.StatusBadRequest {
-				t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
-			}
-			if !strings.Contains(w.Body.String(), tc.want) {
-				t.Fatalf("expected error to mention %q, got %s", tc.want, w.Body.String())
-			}
-		})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	saved, err := cfg.ReadOpenClawJSON()
+	if err != nil {
+		t.Fatalf("read openclaw.json: %v", err)
+	}
+	agents, _ := saved["agents"].(map[string]interface{})
+	list, _ := agents["list"].([]interface{})
+	var workItem map[string]interface{}
+	for _, raw := range list {
+		item, _ := raw.(map[string]interface{})
+		if strings.TrimSpace(getString(item, "id")) == "work" {
+			workItem = item
+			break
+		}
+	}
+	if got := strings.TrimSpace(getString(workItem, "name")); got != "Renamed Work" {
+		t.Fatalf("expected name update to be saved, got %q", got)
+	}
+	if _, ok := workItem["contextTokens"]; ok {
+		t.Fatalf("expected unsupported per-agent contextTokens to be dropped, got %#v", workItem["contextTokens"])
+	}
+	if _, ok := workItem["compaction"]; ok {
+		t.Fatalf("expected unsupported per-agent compaction to be dropped, got %#v", workItem["compaction"])
 	}
 }
 

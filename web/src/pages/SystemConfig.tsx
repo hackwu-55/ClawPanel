@@ -892,7 +892,7 @@ export default function SystemConfig() {
               <CfgSection
                 title="Agent 默认设置"
                 icon={Brain}
-                description="这里控制所有未单独覆盖的 Agent 默认上下文预算；单个 Agent 可在 Agent 管理页继续覆盖 contextTokens / compaction。"
+                description="这里控制所有 Agent 共享的默认上下文预算；当前 OpenClaw schema 不支持单 Agent 级 contextTokens / compaction 覆盖。"
                 defaultExpanded
                 fields={[
                   {

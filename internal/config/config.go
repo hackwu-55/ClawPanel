@@ -327,6 +327,25 @@ func (c *Config) ReadOpenClawJSON() (map[string]interface{}, error) {
 	return result, nil
 }
 
+// NormalizeOpenClawJSONFile 对磁盘上的 openclaw.json 执行兼容性清洗，并在有变更时回写。
+// 返回值 changed 表示文件内容是否被修正。
+func (c *Config) NormalizeOpenClawJSONFile() (changed bool, err error) {
+	ocConfig, err := c.ReadOpenClawJSON()
+	if err != nil {
+		return false, err
+	}
+	if ocConfig == nil {
+		return false, nil
+	}
+	if !NormalizeOpenClawConfigForWrite(ocConfig, c.OpenClawDir) {
+		return false, nil
+	}
+	if err := c.WriteOpenClawJSON(ocConfig); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // ReadQQChannelState returns whether the QQ channel is enabled and its access token.
 func (c *Config) ReadQQChannelState() (bool, string, error) {
 	ocConfig, err := c.ReadOpenClawJSON()

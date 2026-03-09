@@ -150,10 +150,7 @@ func CreateOpenClawAgent(cfg *config.Config) gin.HandlerFunc {
 				merged[k] = deepCloneAny(v)
 			}
 			merged["id"] = id
-			if err := validateAgentContextConfig(merged); err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
-				return
-			}
+			stripUnsupportedAgentContextOverrides(merged)
 			if err := validateAgentIdentityConfig(cfg, id, merged, true); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
 				return
@@ -166,10 +163,7 @@ func CreateOpenClawAgent(cfg *config.Config) gin.HandlerFunc {
 			}
 			list[existingIdx] = merged
 		} else {
-			if err := validateAgentContextConfig(newItem); err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
-				return
-			}
+			stripUnsupportedAgentContextOverrides(newItem)
 			if err := validateAgentIdentityConfig(cfg, id, newItem, true); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
 				return
@@ -252,10 +246,7 @@ func UpdateOpenClawAgent(cfg *config.Config) gin.HandlerFunc {
 			merged[k] = deepCloneAny(v)
 		}
 		merged["id"] = id
-		if err := validateAgentContextConfig(merged); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
-			return
-		}
+		stripUnsupportedAgentContextOverrides(merged)
 		if err := validateAgentIdentityConfig(cfg, id, merged, shouldStrictValidateAgentAvatar(list[idx], payload)); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
 			return
@@ -839,6 +830,14 @@ func validateAgentID(id string) error {
 		return fmt.Errorf("agent id 仅支持字母数字下划线中划线")
 	}
 	return nil
+}
+
+func stripUnsupportedAgentContextOverrides(agent map[string]interface{}) {
+	if agent == nil {
+		return
+	}
+	delete(agent, "contextTokens")
+	delete(agent, "compaction")
 }
 
 func extractAgentIdentityMap(agent map[string]interface{}) map[string]interface{} {

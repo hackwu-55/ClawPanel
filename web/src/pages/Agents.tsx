@@ -9,8 +9,6 @@ interface AgentItem {
   workspace?: string;
   agentDir?: string;
   model?: any;
-  contextTokens?: number;
-  compaction?: any;
   tools?: any;
   sandbox?: any;
   groupChat?: any;
@@ -38,9 +36,6 @@ interface AgentFormState {
   paramTemperature: string;
   paramTopP: string;
   paramMaxTokens: string;
-  contextTokens: string;
-  compactionMode: '' | 'default' | 'safeguard';
-  compactionMaxHistoryShare: string;
   identityName: string;
   identityTheme: string;
   identityEmoji: string;
@@ -74,7 +69,6 @@ interface AgentFormState {
 interface AgentStructuredTouchedState {
   model: boolean;
   params: boolean;
-  context: boolean;
   identity: boolean;
   sandbox: boolean;
   groupChat: boolean;
@@ -212,9 +206,6 @@ const DEFAULT_AGENT_FORM: AgentFormState = {
   paramTemperature: '',
   paramTopP: '',
   paramMaxTokens: '',
-  contextTokens: '',
-  compactionMode: '',
-  compactionMaxHistoryShare: '',
   identityName: '',
   identityTheme: '',
   identityEmoji: '',
@@ -248,7 +239,6 @@ const DEFAULT_AGENT_FORM: AgentFormState = {
 const DEFAULT_AGENT_STRUCTURED_TOUCHED: AgentStructuredTouchedState = {
   model: false,
   params: false,
-  context: false,
   identity: false,
   sandbox: false,
   groupChat: false,
@@ -1133,17 +1123,6 @@ function extractModelDraft(raw: any): { primary: string; fallbacks: string } {
   };
 }
 
-function extractCompactionDraft(raw: any): { mode: '' | 'default' | 'safeguard'; maxHistoryShare: string } {
-  if (!isPlainObject(raw)) {
-    return { mode: '', maxHistoryShare: '' };
-  }
-  const mode = String(raw.mode || '').trim();
-  return {
-    mode: mode === 'default' || mode === 'safeguard' ? mode : '',
-    maxHistoryShare: raw.maxHistoryShare === undefined ? '' : String(raw.maxHistoryShare),
-  };
-}
-
 function extractIdentityDraft(raw: any): { name: string; theme: string; emoji: string; avatar: string } {
   if (!isPlainObject(raw)) {
     return { name: '', theme: '', emoji: '', avatar: '' };
@@ -1234,8 +1213,6 @@ function isImplicitAgent(agent?: AgentItem): boolean {
     agent.workspace ||
     agent.agentDir ||
     agent.model ||
-    agent.contextTokens !== undefined ||
-    agent.compaction ||
     agent.tools ||
     agent.sandbox ||
     agent.groupChat ||
@@ -1258,7 +1235,6 @@ function createAgentFormState(agent?: AgentItem): AgentFormState {
   const subagents = isPlainObject(agent?.subagents) ? agent?.subagents : {};
   const groupChat = isPlainObject(agent?.groupChat) ? agent?.groupChat : {};
   const sandboxDraft = extractSandboxDraft(agent?.sandbox);
-  const compactionDraft = extractCompactionDraft(agent?.compaction);
 
   return {
     ...DEFAULT_AGENT_FORM,
@@ -1272,9 +1248,6 @@ function createAgentFormState(agent?: AgentItem): AgentFormState {
     paramTemperature: params.temperature === undefined ? '' : String(params.temperature),
     paramTopP: params.topP === undefined ? '' : String(params.topP),
     paramMaxTokens: params.maxTokens === undefined ? '' : String(params.maxTokens),
-    contextTokens: agent?.contextTokens === undefined ? '' : String(agent.contextTokens),
-    compactionMode: compactionDraft.mode,
-    compactionMaxHistoryShare: compactionDraft.maxHistoryShare,
     identityName: identityDraft.name,
     identityTheme: identityDraft.theme,
     identityEmoji: identityDraft.emoji,
@@ -2035,7 +2008,6 @@ export default function Agents() {
       setMsg('Agent ID 不能为空');
       return;
     }
-    const baseAgent = agents.find(agent => agent.id === (editingId || id));
     let modelObj: any;
     let toolsObj: any;
     let sandboxObj: any;
@@ -2044,8 +2016,7 @@ export default function Agents() {
     let subagentsObj: any;
     let paramsObj: any;
     let runtimeObj: any;
-    let parsedContextTokens: number | undefined;
-    let parsedCompactionMaxHistoryShare: number | undefined;
+
     try {
       modelObj = parseJSONText(form.modelText, 'model');
       toolsObj = parseJSONText(form.toolsText, 'tools');
@@ -2089,9 +2060,6 @@ export default function Agents() {
         else nextParams.maxTokens = maxTokens;
         paramsObj = cleanupObject(nextParams);
       }
-
-      parsedContextTokens = parseNumberInput(form.contextTokens, 'contextTokens', { integer: true, min: 1 });
-      parsedCompactionMaxHistoryShare = parseNumberInput(form.compactionMaxHistoryShare, 'compaction.maxHistoryShare', { min: 0, max: 1 });
 
       if (structuredTouched.identity) {
         if (identityObj !== undefined && !isPlainObject(identityObj)) {
@@ -2208,25 +2176,6 @@ export default function Agents() {
     if (subagentsObj !== undefined) payload.subagents = subagentsObj;
     if (paramsObj !== undefined) payload.params = paramsObj;
     if (runtimeObj !== undefined) payload.runtime = runtimeObj;
-    if (structuredTouched.context) {
-      if (parsedContextTokens === undefined) {
-        if (baseAgent?.contextTokens !== undefined) payload.contextTokens = null;
-      } else {
-        payload.contextTokens = parsedContextTokens;
-      }
-
-      const nextCompaction = isPlainObject(baseAgent?.compaction) ? deepClone(baseAgent.compaction) : {};
-      if (form.compactionMode) nextCompaction.mode = form.compactionMode;
-      else delete nextCompaction.mode;
-      if (parsedCompactionMaxHistoryShare === undefined) delete nextCompaction.maxHistoryShare;
-      else nextCompaction.maxHistoryShare = parsedCompactionMaxHistoryShare;
-      const cleanedCompaction = cleanupObject(nextCompaction);
-      if (cleanedCompaction === undefined) {
-        if (isPlainObject(baseAgent?.compaction)) payload.compaction = null;
-      } else {
-        payload.compaction = cleanedCompaction;
-      }
-    }
 
     setSaving(true);
     try {
@@ -2601,7 +2550,6 @@ export default function Agents() {
   };
 
   const selectedModelDraft = extractModelDraft(selectedAgent?.model);
-  const selectedCompactionDraft = extractCompactionDraft(selectedAgent?.compaction);
   const selectedIdentity = extractIdentityDraft(selectedAgent?.identity);
   const selectedTools = isPlainObject(selectedAgent?.tools) ? selectedAgent.tools : {};
   const selectedSubagents = isPlainObject(selectedAgent?.subagents) ? selectedAgent.subagents : {};
@@ -2858,8 +2806,8 @@ export default function Agents() {
                             <div className="mt-3 space-y-2 text-sm text-gray-600 dark:text-gray-300">
                               <div>主模型（Primary）：<span className="font-medium text-gray-900 dark:text-white">{selectedModelDraft.primary || defaultModelHint || '继承默认'}</span></div>
                               <div>回退模型（Fallbacks）：{selectedModelDraft.fallbacks || '未设置'}</div>
-                              <div>上下文预算（contextTokens）：{selectedAgent?.contextTokens !== undefined ? String(selectedAgent.contextTokens) : (agentDefaults.contextTokens !== undefined ? `继承默认 (${agentDefaults.contextTokens})` : '继承默认')}</div>
-                              <div>压缩模式（compaction.mode）：{selectedCompactionDraft.mode || agentDefaults.compactionMode || '继承默认'}</div>
+                              <div>默认上下文预算（agents.defaults.contextTokens）：{agentDefaults.contextTokens !== undefined ? String(agentDefaults.contextTokens) : '未设置'}</div>
+                              <div>默认压缩模式（agents.defaults.compaction.mode）：{agentDefaults.compactionMode || '未设置'}</div>
                               <div>身份名（Name）：{selectedIdentity.name || '未设置'}</div>
                               <div>主题（Theme）：{selectedIdentity.theme || '未设置'}</div>
                               <div>表情（Emoji）：{selectedIdentity.emoji || '未设置'}</div>
@@ -2933,27 +2881,21 @@ export default function Agents() {
                               <div className="mt-1 text-gray-700 dark:text-gray-200">{isPlainObject(selectedAgent.params) && selectedAgent.params.maxTokens !== undefined ? String(selectedAgent.params.maxTokens) : '未覆盖'}</div>
                             </div>
                             <div className="rounded-lg bg-gray-50 dark:bg-gray-900 px-3 py-3">
-                              <div className="text-xs text-gray-400">上下文预算（contextTokens）</div>
+                              <div className="text-xs text-gray-400">默认上下文预算（agents.defaults.contextTokens）</div>
                               <div className="mt-1 text-gray-700 dark:text-gray-200">
-                                {selectedAgent?.contextTokens !== undefined
-                                  ? String(selectedAgent.contextTokens)
-                                  : agentDefaults.contextTokens !== undefined
-                                    ? `继承默认 (${agentDefaults.contextTokens})`
-                                    : '继承默认'}
+                                {agentDefaults.contextTokens !== undefined ? String(agentDefaults.contextTokens) : '未设置'}
                               </div>
                             </div>
                             <div className="rounded-lg bg-gray-50 dark:bg-gray-900 px-3 py-3">
-                              <div className="text-xs text-gray-400">压缩模式（compaction.mode）</div>
+                              <div className="text-xs text-gray-400">默认压缩模式（agents.defaults.compaction.mode）</div>
                               <div className="mt-1 text-gray-700 dark:text-gray-200">
-                                {selectedCompactionDraft.mode || agentDefaults.compactionMode || '继承默认'}
+                                {agentDefaults.compactionMode || '未设置'}
                               </div>
                             </div>
                             <div className="rounded-lg bg-gray-50 dark:bg-gray-900 px-3 py-3">
-                              <div className="text-xs text-gray-400">历史占比上限（compaction.maxHistoryShare）</div>
+                              <div className="text-xs text-gray-400">默认历史占比上限（agents.defaults.compaction.maxHistoryShare）</div>
                               <div className="mt-1 text-gray-700 dark:text-gray-200">
-                                {selectedCompactionDraft.maxHistoryShare
-                                  || (agentDefaults.compactionMaxHistoryShare !== undefined ? String(agentDefaults.compactionMaxHistoryShare) : '')
-                                  || '继承默认'}
+                                {agentDefaults.compactionMaxHistoryShare !== undefined ? String(agentDefaults.compactionMaxHistoryShare) : '未设置'}
                               </div>
                             </div>
                           </div>
@@ -4294,45 +4236,31 @@ export default function Agents() {
                       <div>
                         <h4 className="text-sm font-semibold text-gray-900 dark:text-white">上下文预算（Context Budget）</h4>
                         <p className="text-xs text-gray-500 mt-1">
-                          这里覆盖 <span className="font-mono">agents.defaults.contextTokens / compaction</span>；实际运行时仍会与模型真实 <span className="font-mono">contextWindow</span> 取更小值。
+                          当前 OpenClaw schema 仅支持 <span className="font-mono">agents.defaults.contextTokens / compaction</span>，不支持单 Agent 级覆盖。这里展示的是系统默认值；如需修改，请前往 System Config。
                         </p>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                         <div>
-                          <label className="text-xs text-gray-500">上下文 Token 预算（contextTokens）</label>
-                          <input
-                            value={form.contextTokens}
-                            onChange={e => updateForm({ contextTokens: e.target.value }, 'context')}
-                            placeholder={agentDefaults.contextTokens !== undefined ? `默认 ${agentDefaults.contextTokens}` : '留空=继承默认'}
-                            className="w-full mt-1 px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900"
-                          />
+                          <label className="text-xs text-gray-500">默认上下文 Token 预算（agents.defaults.contextTokens）</label>
+                          <div className="w-full mt-1 px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-700 dark:text-gray-200">
+                            {agentDefaults.contextTokens !== undefined ? String(agentDefaults.contextTokens) : '未设置'}
+                          </div>
                         </div>
                         <div>
-                          <label className="text-xs text-gray-500">压缩模式（compaction.mode）</label>
-                          <select
-                            value={form.compactionMode}
-                            onChange={e => updateForm({ compactionMode: e.target.value as '' | 'default' | 'safeguard' }, 'context')}
-                            className="w-full mt-1 px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900"
-                          >
-                            <option value="">继承默认</option>
-                            <option value="default">default</option>
-                            <option value="safeguard">safeguard</option>
-                          </select>
+                          <label className="text-xs text-gray-500">默认压缩模式（agents.defaults.compaction.mode）</label>
+                          <div className="w-full mt-1 px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-700 dark:text-gray-200">
+                            {agentDefaults.compactionMode || '未设置'}
+                          </div>
                         </div>
                         <div>
-                          <label className="text-xs text-gray-500">历史占比上限（compaction.maxHistoryShare）</label>
-                          <input
-                            value={form.compactionMaxHistoryShare}
-                            onChange={e => updateForm({ compactionMaxHistoryShare: e.target.value }, 'context')}
-                            placeholder={agentDefaults.compactionMaxHistoryShare !== undefined ? `默认 ${agentDefaults.compactionMaxHistoryShare}` : '例如 0.5'}
-                            className="w-full mt-1 px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900"
-                          />
+                          <label className="text-xs text-gray-500">默认历史占比上限（agents.defaults.compaction.maxHistoryShare）</label>
+                          <div className="w-full mt-1 px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-700 dark:text-gray-200">
+                            {agentDefaults.compactionMaxHistoryShare !== undefined ? String(agentDefaults.compactionMaxHistoryShare) : '未设置'}
+                          </div>
                         </div>
                       </div>
                       <div className="text-[11px] text-gray-500 leading-relaxed">
-                        当前默认：contextTokens = {agentDefaults.contextTokens !== undefined ? String(agentDefaults.contextTokens) : '未设置'}，
-                        compaction.mode = {agentDefaults.compactionMode || '未设置'}，
-                        compaction.maxHistoryShare = {agentDefaults.compactionMaxHistoryShare !== undefined ? String(agentDefaults.compactionMaxHistoryShare) : '未设置'}。
+                        旧版面板误写入的单 Agent <span className="font-mono">contextTokens / compaction</span> 会在 ClawPanel 启动或保存配置时自动清理，避免继续触发 OpenClaw 配置校验错误。
                       </div>
                     </div>
                   </div>

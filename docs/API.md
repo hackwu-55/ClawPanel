@@ -231,8 +231,7 @@ Authorization: Bearer <token>
 ```
 
 > v5.1.0+：保存时会校验：
-> - `agent.contextTokens` 必须为正整数
-> - `agent.compaction.maxHistoryShare` 必须位于 `0..1`
+> - 当前 OpenClaw schema 不支持 `agent.contextTokens` / `agent.compaction`；面板会在保存时自动清理这两个 legacy per-agent 字段
 > - 更新 Agent 时会保留未修改的 legacy `identity.avatar` 写法；若显式修改 avatar，仍按当前规则校验
 > - `identity` 采用非破坏性规范化：legacy `description/vibe/tone/creature` 与自定义字段会继续保留
 

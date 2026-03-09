@@ -2,24 +2,21 @@
 
 本页总结 ClawPanel 当前围绕 Agent、上下文、路由和工具权限做的核心治理入口。
 
-## 1. 上下文预算：系统默认 + 单 Agent 覆盖
+## 1. 上下文预算与压缩策略
 
-ClawPanel 现在同时支持：
+OpenClaw 的 `contextTokens` 仅支持在全局默认级别设置（`agents.defaults.contextTokens`），
+**不支持** per-agent 级别的 `contextTokens` 覆盖（`AgentEntrySchema` 中无此字段）。
+`compaction` 同理，仅在 `agents.defaults.compaction` 级别生效。
 
-- 系统级 `agents.defaults.contextTokens`
-- 单 Agent 级 `contextTokens`
-- 系统级 / 单 Agent 级 `compaction`
-
-这几个字段的作用更接近“上下文预算和压缩策略”，而不是每次都强塞固定 token 数量。  
-OpenClaw 实际运行时仍会结合模型真实 `contextWindow` 取更小值。
+实际运行时 OpenClaw 会结合模型真实 `contextWindow` 取更小值。
 
 ### 当前面板可做的事
 
-- 在 **System Config** 里修改默认上下文预算与 compaction
-- 在 **Agents** 页面对单个 Agent 做覆盖
-- 保存时前后端都会校验：
-  - `contextTokens` 必须为正整数
-  - `compaction.maxHistoryShare` 必须位于 `0..1`
+- 在 **System Config** 里修改默认上下文预算（`agents.defaults.contextTokens`）与压缩策略（`agents.defaults.compaction`）
+- 保存时前后端会继续校验默认值：
+  - `agents.defaults.contextTokens` 必须为正整数
+  - `agents.defaults.compaction.maxHistoryShare` 必须位于 `0..1`
+- 若误写入 per-agent 级别的 `contextTokens` 或 `compaction`，normalize 阶段会自动清理
 
 ## 2. 路由与默认账号语义
 
