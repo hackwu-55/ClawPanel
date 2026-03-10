@@ -130,6 +130,16 @@ func candidateHomes() []string {
 			}
 		}
 	}
+	// macOS: root 运行时需扫描 /Users/*，否则 npm/二进制探测看不到真实用户的 nvm/fnm
+	if runtime.GOOS == "darwin" {
+		if entries, err := os.ReadDir("/Users"); err == nil {
+			for _, e := range entries {
+				if e.IsDir() && e.Name() != "Shared" {
+					homes = append(homes, filepath.Join("/Users", e.Name()))
+				}
+			}
+		}
+	}
 	return dedupeNonEmpty(homes)
 }
 

@@ -228,6 +228,15 @@ func getDefaultOpenClawDir() string {
 				candidates = append(candidates, filepath.Join("/home", e.Name(), ".openclaw"))
 			}
 		}
+
+		if runtime.GOOS == "darwin" {
+			entries, _ := os.ReadDir("/Users")
+			for _, e := range entries {
+				if e.IsDir() {
+					candidates = append(candidates, filepath.Join("/Users", e.Name(), ".openclaw"))
+				}
+			}
+		}
 	}
 
 	// Return the first candidate that contains openclaw.json
