@@ -384,7 +384,7 @@ func runServer(stopCh chan struct{}) {
 			auth.GET("/plugins/:id/config", handler.GetPluginConfig(pluginMgr))
 			auth.PUT("/plugins/:id/config", handler.UpdatePluginConfig(pluginMgr))
 			auth.GET("/plugins/:id/logs", handler.GetPluginLogs(pluginMgr))
-			auth.POST("/plugins/:id/update", handler.UpdatePluginVersion(pluginMgr))
+			auth.POST("/plugins/:id/update", handler.UpdatePluginVersion(pluginMgr, taskMgr))
 
 			// 软件环境 & 安装任务
 			auth.GET("/software/list", handler.GetSoftwareList(cfg))

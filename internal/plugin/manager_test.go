@@ -1,7 +1,11 @@
 package plugin
 
 import (
+	"archive/zip"
+	"bytes"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -36,6 +40,17 @@ func TestResolvePluginInstallStrategyUsesExplicitNpmSource(t *testing.T) {
 	}
 }
 
+func TestRegistryFetchURLsSkipsInsecureMirrorByDefault(t *testing.T) {
+	t.Parallel()
+
+	urls := registryFetchURLs()
+	for _, url := range urls {
+		if url == RegistryMirrorURL {
+			t.Fatalf("expected insecure mirror to be opt-in only, got %#v", urls)
+		}
+	}
+}
+
 func TestNormalizeOpenClawInstallSource(t *testing.T) {
 	t.Parallel()
 
@@ -55,6 +70,144 @@ func TestNormalizeOpenClawInstallSource(t *testing.T) {
 		if got := normalizeOpenClawInstallSource(input); got != want {
 			t.Fatalf("normalizeOpenClawInstallSource(%q) = %q, want %q", input, got, want)
 		}
+	}
+}
+
+func TestMergeRegistriesPrefersPrimaryEntriesOnConflict(t *testing.T) {
+	t.Parallel()
+
+	primary := Registry{
+		Version:   "2026.03.10",
+		UpdatedAt: "2026-03-10T00:00:00Z",
+		Plugins: []RegistryPlugin{
+			{
+				PluginMeta: PluginMeta{
+					ID:          "feishu",
+					Name:        "Remote Feishu",
+					Version:     "2.0.0",
+					Description: "live registry entry",
+				},
+				NpmPackage: "@openclaw/feishu",
+			},
+		},
+	}
+	bundled := &Registry{
+		Version:   "2025.12.01",
+		UpdatedAt: "2025-12-01T00:00:00Z",
+		Plugins: []RegistryPlugin{
+			{
+				PluginMeta: PluginMeta{
+					ID:          "feishu",
+					Name:        "Bundled Feishu",
+					Version:     "1.0.0",
+					Description: "stale bundled entry",
+				},
+				NpmPackage: "@bundled/feishu",
+			},
+			{
+				PluginMeta: PluginMeta{
+					ID:      "qq",
+					Name:    "QQ",
+					Version: "1.2.3",
+				},
+				NpmPackage: "@openclaw/qq",
+			},
+		},
+	}
+
+	merged := mergeRegistries(primary, bundled)
+	if merged.Version != primary.Version {
+		t.Fatalf("expected primary version to win, got %q", merged.Version)
+	}
+	if merged.UpdatedAt != primary.UpdatedAt {
+		t.Fatalf("expected primary updatedAt to win, got %q", merged.UpdatedAt)
+	}
+	if len(merged.Plugins) != 2 {
+		t.Fatalf("expected bundled registry to fill only missing plugins, got %#v", merged.Plugins)
+	}
+	if merged.Plugins[0].Name != "Remote Feishu" || merged.Plugins[0].NpmPackage != "@openclaw/feishu" {
+		t.Fatalf("expected primary feishu plugin to be preserved, got %#v", merged.Plugins[0])
+	}
+	if merged.Plugins[1].ID != "qq" {
+		t.Fatalf("expected missing bundled plugin to be appended, got %#v", merged.Plugins[1])
+	}
+}
+
+func TestMergeRegistriesBackfillsTopLevelMetadataWhenPrimaryMissing(t *testing.T) {
+	t.Parallel()
+
+	primary := Registry{
+		Plugins: []RegistryPlugin{{PluginMeta: PluginMeta{ID: "feishu", Name: "Remote Feishu"}}},
+	}
+	bundled := &Registry{
+		Version:   "2025.12.01",
+		UpdatedAt: "2025-12-01T00:00:00Z",
+		Plugins:   []RegistryPlugin{{PluginMeta: PluginMeta{ID: "qq", Name: "QQ"}}},
+	}
+
+	merged := mergeRegistries(primary, bundled)
+	if merged.Version != bundled.Version {
+		t.Fatalf("expected bundled version to backfill empty primary version, got %q", merged.Version)
+	}
+	if merged.UpdatedAt != bundled.UpdatedAt {
+		t.Fatalf("expected bundled updatedAt to backfill empty primary updatedAt, got %q", merged.UpdatedAt)
+	}
+}
+
+func TestFetchRegistryPrefersCachedRegistryOverBundledFallback(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cfg := &config.Config{DataDir: dir}
+	cached := &Registry{
+		Version:   "2026.03.10",
+		UpdatedAt: "2026-03-10T00:00:00Z",
+		Plugins: []RegistryPlugin{
+			{PluginMeta: PluginMeta{ID: "feishu", Name: "Cached Feishu", Version: "2.0.0"}},
+		},
+	}
+	cachedRaw, _ := json.MarshalIndent(cached, "", "  ")
+	cachePath := filepath.Join(dir, "plugin-registry-cache.json")
+	if err := os.WriteFile(cachePath, cachedRaw, 0o644); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "offline", http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	bundled := &Registry{
+		Version:   "2025.12.01",
+		UpdatedAt: "2025-12-01T00:00:00Z",
+		Plugins: []RegistryPlugin{
+			{PluginMeta: PluginMeta{ID: "feishu", Name: "Bundled Feishu", Version: "1.0.0"}},
+			{PluginMeta: PluginMeta{ID: "qq", Name: "QQ", Version: "1.2.3"}},
+		},
+	}
+
+	m := &Manager{cfg: cfg}
+	reg, err := m.fetchRegistryFromURLs(server.Client(), []string{server.URL}, bundled)
+	if err != nil {
+		t.Fatalf("fetchRegistryFromURLs: %v", err)
+	}
+	if reg.Version != cached.Version {
+		t.Fatalf("expected cached registry version to win during offline fallback, got %q", reg.Version)
+	}
+	if len(reg.Plugins) != 2 || reg.Plugins[0].Name != "Cached Feishu" {
+		t.Fatalf("expected cached registry to be preserved and bundled to only fill gaps, got %#v", reg.Plugins)
+	}
+
+	raw, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatalf("read cache after fallback: %v", err)
+	}
+	var persisted Registry
+	if err := json.Unmarshal(raw, &persisted); err != nil {
+		t.Fatalf("decode cache after fallback: %v", err)
+	}
+	if persisted.Version != cached.Version {
+		t.Fatalf("expected offline fallback to keep existing disk cache, got %q", persisted.Version)
 	}
 }
 
@@ -336,7 +489,7 @@ func TestEnsureOpenClawPluginManifestCreatesCompatFile(t *testing.T) {
 	}
 }
 
-func TestScanInstalledPluginsKeepsPluginWhenCompatManifestWriteFails(t *testing.T) {
+func TestReconcilePluginStatesKeepsPluginWhenCompatManifestWriteFails(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("permission semantics differ on Windows")
 	}
@@ -370,9 +523,29 @@ func TestScanInstalledPluginsKeepsPluginWhenCompatManifestWriteFails(t *testing.
 		configFile: filepath.Join(dir, "plugins.json"),
 	}
 	m.scanInstalledPlugins()
+	m.reconcilePluginStates()
 
-	if _, ok := m.plugins["readonly-plugin"]; !ok {
+	p := m.plugins["readonly-plugin"]
+	if p == nil {
 		t.Fatalf("expected plugin to stay visible even when compat manifest cannot be written")
+	}
+	if !p.NeedManifestRepair {
+		t.Fatalf("expected NeedManifestRepair to remain true after failed reconcile")
+	}
+	if p.NeedConfigSync {
+		t.Fatalf("expected config sync to succeed even when manifest repair fails")
+	}
+	if _, err := os.Stat(filepath.Join(pluginDir, "openclaw.plugin.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected manifest write to fail, but openclaw.plugin.json exists")
+	}
+	saved, err := m.cfg.ReadOpenClawJSON()
+	if err != nil {
+		t.Fatalf("ReadOpenClawJSON: %v", err)
+	}
+	pl, _ := saved["plugins"].(map[string]interface{})
+	ent, _ := pl["entries"].(map[string]interface{})
+	if _, ok := ent["readonly-plugin"]; !ok {
+		t.Fatalf("expected reconcile to still register plugin entry in openclaw.json")
 	}
 }
 
@@ -507,4 +680,326 @@ func TestReconcilePluginStatesWritesDeferredChanges(t *testing.T) {
 	if _, ok := entries["reconcile-plugin"]; !ok {
 		t.Fatalf("expected reconcile-plugin in openclaw.json entries")
 	}
+}
+
+func TestReconcilePluginStatesPreservesExistingDisabledEntry(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	openClawDir := filepath.Join(dir, "openclaw")
+	if err := os.MkdirAll(openClawDir, 0o755); err != nil {
+		t.Fatalf("mkdir openclaw dir: %v", err)
+	}
+	pluginsDir := filepath.Join(dir, "extensions")
+	pluginDir := filepath.Join(pluginsDir, "disabled-plugin")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatalf("mkdir plugin dir: %v", err)
+	}
+	data, _ := json.Marshal(map[string]interface{}{
+		"id":          "disabled-plugin",
+		"name":        "Disabled Plugin",
+		"version":     "1.0.0",
+		"description": "discovered from disk",
+	})
+	if err := os.WriteFile(filepath.Join(pluginDir, "plugin.json"), data, 0o644); err != nil {
+		t.Fatalf("write plugin.json: %v", err)
+	}
+
+	seed := map[string]interface{}{
+		"plugins": map[string]interface{}{
+			"entries": map[string]interface{}{
+				"disabled-plugin": map[string]interface{}{"enabled": false},
+			},
+		},
+	}
+	raw, _ := json.MarshalIndent(seed, "", "  ")
+	if err := os.WriteFile(filepath.Join(openClawDir, "openclaw.json"), raw, 0o644); err != nil {
+		t.Fatalf("write openclaw.json: %v", err)
+	}
+
+	m := &Manager{
+		cfg:        &config.Config{OpenClawDir: openClawDir},
+		plugins:    map[string]*InstalledPlugin{},
+		pluginsDir: pluginsDir,
+		configFile: filepath.Join(dir, "plugins.json"),
+	}
+
+	m.scanInstalledPlugins()
+	m.reconcilePluginStates()
+
+	p := m.plugins["disabled-plugin"]
+	if p == nil {
+		t.Fatalf("expected plugin to remain present after reconcile")
+	}
+	if p.Enabled {
+		t.Fatalf("expected in-memory plugin state to adopt existing disabled entry")
+	}
+	if p.NeedConfigSync {
+		t.Fatalf("expected NeedConfigSync to be cleared after reconcile")
+	}
+
+	saved, err := m.cfg.ReadOpenClawJSON()
+	if err != nil {
+		t.Fatalf("ReadOpenClawJSON: %v", err)
+	}
+	pl, _ := saved["plugins"].(map[string]interface{})
+	ent, _ := pl["entries"].(map[string]interface{})
+	entry, _ := ent["disabled-plugin"].(map[string]interface{})
+	if enabled, _ := entry["enabled"].(bool); enabled {
+		t.Fatalf("expected existing disabled entry to be preserved, got %#v", entry)
+	}
+	ins, _ := pl["installs"].(map[string]interface{})
+	install, _ := ins["disabled-plugin"].(map[string]interface{})
+	if got, _ := install["installPath"].(string); got == "" {
+		t.Fatalf("expected reconcile to still upsert install metadata, got %#v", install)
+	}
+}
+
+func TestInstallFromArchiveReturnsExtractorErrors(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("archive extraction tooling differs on Windows")
+	}
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/zip")
+		_, _ = w.Write([]byte("not-a-real-zip"))
+	}))
+	defer server.Close()
+
+	m := &Manager{}
+	if err := m.installFromArchive(server.URL+"/plugin.zip", t.TempDir()); err == nil {
+		t.Fatalf("expected invalid archive extraction to return an error")
+	}
+}
+
+func TestUpdatePreservesChannelConfigWhenRegistryReinstallFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("archive extraction tooling differs on Windows")
+	}
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/zip")
+		_, _ = w.Write([]byte("not-a-real-zip"))
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	openClawDir := filepath.Join(dir, "openclaw")
+	if err := os.MkdirAll(openClawDir, 0o755); err != nil {
+		t.Fatalf("mkdir openclaw dir: %v", err)
+	}
+	pluginsDir := filepath.Join(dir, "extensions")
+	pluginDir := filepath.Join(pluginsDir, "feishu")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatalf("mkdir plugin dir: %v", err)
+	}
+	data, _ := json.Marshal(map[string]interface{}{
+		"id":          "feishu",
+		"name":        "Feishu",
+		"version":     "1.0.0",
+		"description": "installed plugin",
+	})
+	if err := os.WriteFile(filepath.Join(pluginDir, "plugin.json"), data, 0o644); err != nil {
+		t.Fatalf("write plugin.json: %v", err)
+	}
+
+	seed := map[string]interface{}{
+		"channels": map[string]interface{}{
+			"feishu": map[string]interface{}{
+				"enabled":   true,
+				"appId":     "cli_xxx",
+				"appSecret": "secret_xxx",
+			},
+		},
+		"plugins": map[string]interface{}{
+			"entries": map[string]interface{}{
+				"feishu": map[string]interface{}{"enabled": true},
+			},
+			"installs": map[string]interface{}{
+				"feishu": map[string]interface{}{"installPath": pluginDir},
+			},
+		},
+	}
+	raw, _ := json.MarshalIndent(seed, "", "  ")
+	if err := os.WriteFile(filepath.Join(openClawDir, "openclaw.json"), raw, 0o644); err != nil {
+		t.Fatalf("write openclaw.json: %v", err)
+	}
+
+	m := &Manager{
+		cfg:        &config.Config{OpenClawDir: openClawDir},
+		plugins:    map[string]*InstalledPlugin{"feishu": {PluginMeta: PluginMeta{ID: "feishu", Name: "Feishu"}, Source: "npm", Dir: pluginDir}},
+		registry:   &Registry{Plugins: []RegistryPlugin{{PluginMeta: PluginMeta{ID: "feishu", Name: "Feishu", Version: "2.0.0"}, DownloadURL: server.URL + "/plugin.zip"}}},
+		pluginsDir: pluginsDir,
+		configFile: filepath.Join(dir, "plugins.json"),
+	}
+
+	if err := m.Update("feishu"); err == nil {
+		t.Fatalf("expected registry reinstall failure to be returned")
+	}
+
+	saved, err := m.cfg.ReadOpenClawJSON()
+	if err != nil {
+		t.Fatalf("ReadOpenClawJSON: %v", err)
+	}
+	channels, _ := saved["channels"].(map[string]interface{})
+	if _, ok := channels["feishu"]; !ok {
+		t.Fatalf("expected channel config to survive failed update, got %#v", channels)
+	}
+	if _, ok := m.plugins["feishu"]; ok {
+		t.Fatalf("expected failed update to leave plugin uninstalled until a fresh install succeeds")
+	}
+
+	validServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/zip")
+		_, _ = w.Write(makePluginArchive(t, map[string]interface{}{
+			"id":          "feishu",
+			"name":        "Feishu",
+			"version":     "2.0.0",
+			"description": "updated plugin",
+		}))
+	}))
+	defer validServer.Close()
+
+	m.registry.Plugins[0].DownloadURL = validServer.URL + "/plugin.zip"
+	if err := m.Install("feishu", ""); err != nil {
+		t.Fatalf("expected fresh install after failed update to succeed, got %v", err)
+	}
+	if _, ok := m.plugins["feishu"]; !ok {
+		t.Fatalf("expected plugin to be installable again after failed update")
+	}
+}
+
+func TestUninstallWithProgressKeepsPluginWhenConfigCleanupFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("file permission semantics differ on Windows")
+	}
+	t.Parallel()
+
+	dir := t.TempDir()
+	openClawDir := filepath.Join(dir, "openclaw")
+	if err := os.MkdirAll(openClawDir, 0o755); err != nil {
+		t.Fatalf("mkdir openclaw dir: %v", err)
+	}
+	pluginsDir := filepath.Join(dir, "extensions")
+	pluginDir := filepath.Join(pluginsDir, "feishu")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatalf("mkdir plugin dir: %v", err)
+	}
+
+	seed := map[string]interface{}{
+		"plugins": map[string]interface{}{
+			"entries": map[string]interface{}{
+				"feishu": map[string]interface{}{"enabled": true},
+			},
+			"installs": map[string]interface{}{
+				"feishu": map[string]interface{}{"installPath": pluginDir},
+			},
+		},
+	}
+	raw, _ := json.MarshalIndent(seed, "", "  ")
+	cfgPath := filepath.Join(openClawDir, "openclaw.json")
+	if err := os.WriteFile(cfgPath, raw, 0o444); err != nil {
+		t.Fatalf("write read-only openclaw.json: %v", err)
+	}
+	defer os.Chmod(cfgPath, 0o644)
+
+	m := &Manager{
+		cfg:        &config.Config{OpenClawDir: openClawDir},
+		plugins:    map[string]*InstalledPlugin{"feishu": {PluginMeta: PluginMeta{ID: "feishu"}, Dir: pluginDir, Source: "registry"}},
+		pluginsDir: pluginsDir,
+		configFile: filepath.Join(dir, "plugins.json"),
+	}
+
+	if err := m.UninstallWithProgress("feishu", true, nil); err == nil {
+		t.Fatalf("expected openclaw.json cleanup failure to abort uninstall")
+	}
+	if _, ok := m.plugins["feishu"]; !ok {
+		t.Fatalf("expected plugin to remain installed in memory after cleanup failure")
+	}
+	if _, err := os.Stat(pluginDir); err != nil {
+		t.Fatalf("expected plugin directory to remain after cleanup failure: %v", err)
+	}
+}
+
+func TestGetPluginReturnsCopy(t *testing.T) {
+	t.Parallel()
+
+	m := &Manager{
+		plugins: map[string]*InstalledPlugin{
+			"feishu": {
+				PluginMeta: PluginMeta{
+					ID:           "feishu",
+					Tags:         []string{"chat"},
+					Dependencies: map[string]string{"node": ">=20"},
+				},
+				Config: map[string]interface{}{"enabled": true, "nested": map[string]interface{}{"foo": "bar"}},
+			},
+		},
+	}
+
+	got := m.GetPlugin("feishu")
+	got.Tags[0] = "mutated"
+	got.Dependencies["node"] = ">=18"
+	got.Config["enabled"] = false
+
+	original := m.plugins["feishu"]
+	if original.Tags[0] != "chat" {
+		t.Fatalf("expected tag slice to be copied")
+	}
+	if original.Dependencies["node"] != ">=20" {
+		t.Fatalf("expected dependencies map to be copied")
+	}
+	if enabled, _ := original.Config["enabled"].(bool); !enabled {
+		t.Fatalf("expected config map to be copied")
+	}
+}
+
+func TestResolveInstallSubDirRejectsTraversal(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if _, err := resolveInstallSubDir(root, "../../etc"); err == nil {
+		t.Fatalf("expected traversal installSubDir to be rejected")
+	}
+}
+
+func TestCopyDirRejectsSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires extra privileges on Windows")
+	}
+	t.Parallel()
+
+	src := t.TempDir()
+	dst := filepath.Join(t.TempDir(), "dst")
+	if err := os.Symlink("/etc/hosts", filepath.Join(src, "hosts-link")); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	if err := copyDir(src, dst); err == nil {
+		t.Fatalf("expected symlinked file to be rejected")
+	}
+}
+
+func makePluginArchive(t *testing.T, pluginJSON map[string]interface{}) []byte {
+	t.Helper()
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create("plugin.json")
+	if err != nil {
+		t.Fatalf("create plugin.json entry: %v", err)
+	}
+	data, err := json.Marshal(pluginJSON)
+	if err != nil {
+		t.Fatalf("marshal plugin.json: %v", err)
+	}
+	if _, err := w.Write(data); err != nil {
+		t.Fatalf("write plugin.json entry: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("close archive: %v", err)
+	}
+	return buf.Bytes()
 }

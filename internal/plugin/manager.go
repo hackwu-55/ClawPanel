@@ -109,8 +109,8 @@ func NewManager(cfg *config.Config) *Manager {
 		configFile: filepath.Join(cfg.DataDir, "plugins.json"),
 	}
 	m.loadPluginsState()
-	m.scanInstalledPlugins()        // read-only: discover plugins
-	m.reconcilePluginStates()       // write phase: sync manifests & config
+	m.scanInstalledPlugins()  // read-only: discover plugins
+	m.reconcilePluginStates() // write phase: sync manifests & config
 	return m
 }
 
@@ -125,8 +125,7 @@ func (m *Manager) ListInstalled() []*InstalledPlugin {
 	m.mu.RLock()
 	result := make([]*InstalledPlugin, 0, len(m.plugins))
 	for _, p := range m.plugins {
-		cp := *p // value copy so we can mutate without touching the in-memory map
-		result = append(result, &cp)
+		result = append(result, cloneInstalledPlugin(p))
 	}
 	m.mu.RUnlock()
 
@@ -152,55 +151,65 @@ func (m *Manager) ListInstalled() []*InstalledPlugin {
 // GetPlugin returns a specific installed plugin
 func (m *Manager) GetPlugin(id string) *InstalledPlugin {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.plugins[id]
+	p := m.plugins[id]
+	m.mu.RUnlock()
+	return cloneInstalledPlugin(p)
 }
 
 // FetchRegistry fetches the plugin registry from server
 func (m *Manager) FetchRegistry() (*Registry, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
 	bundled := m.loadBundledRegistry()
+	return m.fetchRegistryFromURLs(client, registryFetchURLs(), bundled)
+}
 
+func (m *Manager) fetchRegistryFromURLs(client *http.Client, urls []string, bundled *Registry) (*Registry, error) {
 	// Try mirror first (faster in China), then GitHub, then Gitee fallback
-	urls := []string{RegistryMirrorURL, RegistryURL, RegistryFallbackURLCN}
 	var lastErr error
 	for _, url := range urls {
-		resp, err := client.Get(url)
+		reg, err := func() (*Registry, error) {
+			resp, err := client.Get(url)
+			if err != nil {
+				return nil, err
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				return nil, fmt.Errorf("HTTP %d from %s", resp.StatusCode, url)
+			}
+			var reg Registry
+			if err := json.NewDecoder(resp.Body).Decode(&reg); err != nil {
+				return nil, fmt.Errorf("parse registry: %v", err)
+			}
+			return &reg, nil
+		}()
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		defer resp.Body.Close()
-		if resp.StatusCode != 200 {
-			lastErr = fmt.Errorf("HTTP %d from %s", resp.StatusCode, url)
-			continue
-		}
-		var reg Registry
-		if err := json.NewDecoder(resp.Body).Decode(&reg); err != nil {
-			lastErr = fmt.Errorf("parse registry: %v", err)
-			continue
-		}
-		reg = mergeRegistries(reg, bundled)
+		merged := mergeRegistries(*reg, bundled)
 		m.mu.Lock()
-		m.registry = &reg
+		m.registry = &merged
 		m.mu.Unlock()
 		// Cache to disk
-		m.cacheRegistry(&reg)
-		return &reg, nil
+		m.cacheRegistry(&merged)
+		return &merged, nil
+	}
+
+	// Try cached registry before bundled fallback. A previous successful fetch can be
+	// newer than the registry embedded in the current binary.
+	if cached := m.loadCachedRegistry(); cached != nil {
+		merged := mergeRegistries(*cached, bundled)
+		m.mu.Lock()
+		m.registry = &merged
+		m.mu.Unlock()
+		return &merged, nil
 	}
 
 	if bundled != nil {
 		m.mu.Lock()
 		m.registry = bundled
 		m.mu.Unlock()
-		m.cacheRegistry(bundled)
 		return bundled, nil
-	}
-
-	// Try cached registry
-	if cached := m.loadCachedRegistry(); cached != nil {
-		merged := mergeRegistries(*cached, bundled)
-		return &merged, nil
 	}
 
 	return nil, fmt.Errorf("获取插件仓库失败: %v", lastErr)
@@ -388,7 +397,10 @@ func (m *Manager) InstallWithProgress(pluginID string, source string, logf func(
 			if err := m.installFromGit(downloadURL, tmpDir); err != nil {
 				return fmt.Errorf("Git 安装失败: %v", err)
 			}
-			subPath := filepath.Join(tmpDir, filepath.FromSlash(installSubDir))
+			subPath, err := resolveInstallSubDir(tmpDir, installSubDir)
+			if err != nil {
+				return err
+			}
 			if _, err := os.Stat(subPath); err != nil {
 				return fmt.Errorf("子目录 %s 在仓库中不存在", installSubDir)
 			}
@@ -487,13 +499,10 @@ func (m *Manager) installViaOpenClawCLI(spec string, logf func(string)) error {
 		return err
 	}
 	if logf != nil {
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			if line != "" {
-				logf(line)
-			}
+		if err := scanCommandOutput(stdout, logf); err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return err
 		}
 	} else {
 		_, _ = io.Copy(io.Discard, stdout)
@@ -543,17 +552,20 @@ func (m *Manager) Uninstall(pluginID string, cleanupConfig bool) error {
 }
 
 func (m *Manager) UninstallWithProgress(pluginID string, cleanupConfig bool, logf func(string)) error {
-	m.mu.Lock()
+	m.mu.RLock()
 	p, ok := m.plugins[pluginID]
 	if !ok {
-		m.mu.Unlock()
+		m.mu.RUnlock()
 		return fmt.Errorf("插件 %s 未安装", pluginID)
 	}
-	delete(m.plugins, pluginID)
-	m.mu.Unlock()
+	cp := *p
+	m.mu.RUnlock()
 
 	if logf != nil {
 		logf("📦 开始卸载插件 " + pluginID)
+	}
+	if err := m.removeOpenClawPluginState(pluginID, cleanupConfig); err != nil {
+		return err
 	}
 	if err := m.uninstallViaOpenClawCLI(pluginID, logf); err != nil {
 		if logf != nil {
@@ -562,14 +574,14 @@ func (m *Manager) UninstallWithProgress(pluginID string, cleanupConfig bool, log
 	}
 
 	// Remove plugin directory
-	if p.Dir != "" {
-		os.RemoveAll(p.Dir)
+	if cp.Dir != "" {
+		_ = os.RemoveAll(cp.Dir)
 	}
 
+	m.mu.Lock()
+	delete(m.plugins, pluginID)
+	m.mu.Unlock()
 	m.savePluginsState()
-	if err := m.removeOpenClawPluginState(pluginID, cleanupConfig); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -589,13 +601,10 @@ func (m *Manager) uninstallViaOpenClawCLI(pluginID string, logf func(string)) er
 		return err
 	}
 	if logf != nil {
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			if line != "" {
-				logf(line)
-			}
+		if err := scanCommandOutput(stdout, logf); err != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return err
 		}
 	} else {
 		_, _ = io.Copy(io.Discard, stdout)
@@ -678,7 +687,7 @@ func (m *Manager) GetConfig(pluginID string) (map[string]interface{}, json.RawMe
 		cfg = map[string]interface{}{}
 	}
 
-	return cfg, p.ConfigSchema, nil
+	return cloneGenericMap(cfg), append(json.RawMessage(nil), p.ConfigSchema...), nil
 }
 
 // GetPluginLogs returns recent log lines for a plugin
@@ -745,14 +754,14 @@ func (m *Manager) Update(pluginID string) error {
 	}
 
 	// Otherwise, uninstall and reinstall from registry
-	source := p.Source
-	if err := m.Uninstall(pluginID, true); err != nil {
+	source := strings.TrimSpace(strings.ToLower(p.Source))
+	if source != "registry" && source != "npm" {
+		return fmt.Errorf("非仓库插件无法自动更新，请手动卸载重装")
+	}
+	if err := m.Uninstall(pluginID, false); err != nil {
 		return err
 	}
-	if source == "registry" {
-		return m.Install(pluginID, "")
-	}
-	return fmt.Errorf("非 Git 仓库插件无法自动更新，请手动卸载重装")
+	return m.Install(pluginID, "")
 }
 
 // CheckConflicts checks for potential conflicts before installing
@@ -857,11 +866,13 @@ func (m *Manager) reconcilePluginStates() {
 			}
 		}
 		if needSync {
-			if err := m.syncOpenClawPluginState(id, dir, enabled, source, version); err != nil {
+			effectiveEnabled, err := m.syncDiscoveredOpenClawPluginState(id, dir, enabled, source, version)
+			if err != nil {
 				continue
 			}
 			m.mu.Lock()
 			if pp := m.plugins[id]; pp != nil {
+				pp.Enabled = effectiveEnabled
 				pp.NeedConfigSync = false
 			}
 			m.mu.Unlock()
@@ -996,27 +1007,35 @@ func mergeRegistries(primary Registry, bundled *Registry) Registry {
 		return primary
 	}
 	merged := primary
-	index := make(map[string]int, len(merged.Plugins))
-	for i, plugin := range merged.Plugins {
-		index[plugin.ID] = i
+	index := make(map[string]struct{}, len(merged.Plugins))
+	for _, plugin := range merged.Plugins {
+		index[plugin.ID] = struct{}{}
 	}
 	for _, plugin := range bundled.Plugins {
-		if idx, ok := index[plugin.ID]; ok {
-			merged.Plugins[idx] = plugin
-		} else {
+		if _, ok := index[plugin.ID]; !ok {
 			merged.Plugins = append(merged.Plugins, plugin)
+			index[plugin.ID] = struct{}{}
 		}
 	}
-	if bundled.Version != "" {
+	if merged.Version == "" && bundled.Version != "" {
 		merged.Version = bundled.Version
 	}
-	if bundled.UpdatedAt != "" {
+	if merged.UpdatedAt == "" && bundled.UpdatedAt != "" {
 		merged.UpdatedAt = bundled.UpdatedAt
 	}
 	return merged
 }
 
 func (m *Manager) syncOpenClawPluginState(pluginID, installPath string, enabled bool, source string, version string) error {
+	_, err := m.writeOpenClawPluginState(pluginID, installPath, enabled, source, version, false)
+	return err
+}
+
+func (m *Manager) syncDiscoveredOpenClawPluginState(pluginID, installPath string, enabled bool, source string, version string) (bool, error) {
+	return m.writeOpenClawPluginState(pluginID, installPath, enabled, source, version, true)
+}
+
+func (m *Manager) writeOpenClawPluginState(pluginID, installPath string, enabled bool, source string, version string, preserveExistingEnabled bool) (bool, error) {
 	ocConfig, err := m.cfg.ReadOpenClawJSON()
 	if err != nil || ocConfig == nil {
 		ocConfig = map[string]interface{}{}
@@ -1031,7 +1050,21 @@ func (m *Manager) syncOpenClawPluginState(pluginID, installPath string, enabled 
 		ent = map[string]interface{}{}
 		pl["entries"] = ent
 	}
-	ent[pluginID] = map[string]interface{}{"enabled": enabled}
+	entry, _ := ent[pluginID].(map[string]interface{})
+	if entry == nil {
+		entry = map[string]interface{}{}
+		ent[pluginID] = entry
+	}
+	effectiveEnabled := enabled
+	if preserveExistingEnabled {
+		if existingEnabled, ok := entry["enabled"].(bool); ok {
+			effectiveEnabled = existingEnabled
+		} else {
+			entry["enabled"] = enabled
+		}
+	} else {
+		entry["enabled"] = enabled
+	}
 
 	ins, _ := pl["installs"].(map[string]interface{})
 	if ins == nil {
@@ -1055,7 +1088,7 @@ func (m *Manager) syncOpenClawPluginState(pluginID, installPath string, enabled 
 	if _, ok := item["installedAt"]; !ok {
 		item["installedAt"] = time.Now().UTC().Format(time.RFC3339)
 	}
-	return m.cfg.WriteOpenClawJSON(ocConfig)
+	return effectiveEnabled, m.cfg.WriteOpenClawJSON(ocConfig)
 }
 
 func normalizeOpenClawInstallSource(source string) string {
@@ -1069,6 +1102,41 @@ func normalizeOpenClawInstallSource(source string) string {
 	default:
 		return "path"
 	}
+}
+
+func registryFetchURLs() []string {
+	urls := []string{RegistryURL, RegistryFallbackURLCN}
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("CLAWPANEL_ALLOW_INSECURE_PLUGIN_MIRROR")), "true") {
+		urls = append([]string{RegistryMirrorURL}, urls...)
+	}
+	return urls
+}
+
+func scanCommandOutput(stdout io.Reader, logf func(string)) error {
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" {
+			logf(line)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("读取命令输出失败: %w", err)
+	}
+	return nil
+}
+
+func resolveInstallSubDir(rootDir, installSubDir string) (string, error) {
+	subPath := filepath.Join(rootDir, filepath.FromSlash(installSubDir))
+	rel, err := filepath.Rel(rootDir, subPath)
+	if err != nil {
+		return "", fmt.Errorf("解析插件子目录失败: %v", err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("插件子目录 %s 越界，已拒绝安装", installSubDir)
+	}
+	return subPath, nil
 }
 
 func (m *Manager) removeOpenClawPluginState(pluginID string, cleanupConfig bool) error {
@@ -1171,19 +1239,28 @@ func (m *Manager) installFromArchive(url, dest string) error {
 	if err != nil {
 		return err
 	}
-	io.Copy(f, resp.Body)
-	f.Close()
+	defer os.Remove(tmpFile)
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		f.Close()
+		return fmt.Errorf("下载插件失败: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("写入插件归档失败: %v", err)
+	}
 
 	// Extract based on extension
 	if strings.HasSuffix(url, ".zip") {
 		cmd := exec.Command("unzip", "-o", tmpFile, "-d", dest)
-		cmd.Run()
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("解压 zip 失败: %v: %s", err, strings.TrimSpace(string(out)))
+		}
 	} else if strings.HasSuffix(url, ".tar.gz") {
 		cmd := exec.Command("tar", "-xzf", tmpFile, "-C", dest)
-		cmd.Run()
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("解压 tar.gz 失败: %v: %s", err, strings.TrimSpace(string(out)))
+		}
 	}
 
-	os.Remove(tmpFile)
 	return nil
 }
 
@@ -1199,6 +1276,9 @@ func copyDir(src, dst string) error {
 		if info.IsDir() {
 			return os.MkdirAll(dstPath, info.Mode())
 		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("检测到不支持的符号链接: %s", path)
+		}
 
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -1206,4 +1286,38 @@ func copyDir(src, dst string) error {
 		}
 		return os.WriteFile(dstPath, data, info.Mode())
 	})
+}
+
+func cloneInstalledPlugin(p *InstalledPlugin) *InstalledPlugin {
+	if p == nil {
+		return nil
+	}
+	cp := *p
+	cp.Tags = append([]string(nil), p.Tags...)
+	cp.Permissions = append([]string(nil), p.Permissions...)
+	cp.LogLines = append([]string(nil), p.LogLines...)
+	cp.ConfigSchema = append(json.RawMessage(nil), p.ConfigSchema...)
+	if p.Dependencies != nil {
+		cp.Dependencies = make(map[string]string, len(p.Dependencies))
+		for key, value := range p.Dependencies {
+			cp.Dependencies[key] = value
+		}
+	}
+	cp.Config = cloneGenericMap(p.Config)
+	return &cp
+}
+
+func cloneGenericMap(src map[string]interface{}) map[string]interface{} {
+	if src == nil {
+		return nil
+	}
+	raw, err := json.Marshal(src)
+	if err != nil {
+		return nil
+	}
+	var dst map[string]interface{}
+	if err := json.Unmarshal(raw, &dst); err != nil {
+		return nil
+	}
+	return dst
 }

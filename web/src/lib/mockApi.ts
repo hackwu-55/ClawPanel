@@ -165,6 +165,28 @@ const FAKE_FILES: any[] = [
   { name: 'avatar.png', path: 'avatar.png', size: 45678, sizeHuman: '44.6 KB', isDirectory: false, modifiedAt: new Date(Date.now() - 2592000000).toISOString(), extension: '.png', ageDays: 30 },
 ];
 
+const FAKE_PLUGINS = [
+  { id: 'telegram', name: 'Telegram Bridge', description: 'Telegram 通道插件', enabled: true, version: '1.3.0', installed: true, source: 'clawhub', hasUpdate: false },
+  { id: 'calendar', name: 'Calendar Tools', description: '日历与提醒插件', enabled: false, version: '0.9.0', installed: true, source: 'manual', hasUpdate: true, latestVersion: '1.0.0' },
+  { id: 'notion-sync', name: 'Notion Sync', description: 'Notion 双向同步插件', enabled: false, version: '0.7.2', installed: false, source: 'clawhub', hasUpdate: false },
+];
+
+const FAKE_WORKFLOW_TEMPLATES = [
+  { id: 'tpl-1', name: '日报生成', description: '自动生成每日工作日报', category: 'report', steps: [{ key: 'gather', type: 'agent', prompt: '汇总今日工作' }, { key: 'format', type: 'agent', prompt: '格式化为日报' }], createdAt: Date.now() - 604800000 },
+  { id: 'tpl-2', name: '代码审查', description: '自动化代码 Review 流程', category: 'dev', steps: [{ key: 'diff', type: 'tool', tool: 'exec', args: 'git diff' }, { key: 'review', type: 'agent', prompt: '审查代码变更' }], createdAt: Date.now() - 1209600000 },
+];
+
+const FAKE_WORKFLOW_RUNS = [
+  { id: 'run-1', templateId: 'tpl-1', templateName: '日报生成', status: 'completed', startedAt: Date.now() - 3600000, completedAt: Date.now() - 3500000, steps: [{ key: 'gather', status: 'completed' }, { key: 'format', status: 'completed' }] },
+  { id: 'run-2', templateId: 'tpl-2', templateName: '代码审查', status: 'running', startedAt: Date.now() - 600000, steps: [{ key: 'diff', status: 'completed' }, { key: 'review', status: 'running' }] },
+];
+
+const FAKE_SESSIONS = [
+  { id: 'sess-1', agentId: 'main', type: 'dm', peer: 'ou_demo_a', messageCount: 24, createdAt: Date.now() - 86400000, lastMessageAt: Date.now() - 3600000 },
+  { id: 'sess-2', agentId: 'main', type: 'group', peer: 'oc_demo_group', messageCount: 8, createdAt: Date.now() - 172800000, lastMessageAt: Date.now() - 7200000 },
+  { id: 'sess-3', agentId: 'work', type: 'dm', peer: 'ou_demo_b', messageCount: 15, createdAt: Date.now() - 259200000, lastMessageAt: Date.now() - 86400000 },
+];
+
 export const mockApi = {
   login: async (_token: string) => { await delay(500); return { ok: true, token: 'demo-token' }; },
   changePassword: async (_old: string, _new: string) => { await delay(300); return { ok: true }; },
@@ -283,9 +305,6 @@ export const mockApi = {
   workspaceMkdir: async () => { await delay(200); return { ok: true }; },
   workspaceDelete: async (paths: string[]) => { await delay(200); return { ok: true, deleted: paths }; },
   workspaceClean: async () => { await delay(300); return { ok: true, deleted: ['old-file.log'] }; },
-  workspaceDownloadUrl: (_filePath: string) => '#',
-  workspacePreviewUrl: (_filePath: string) => '/logo.jpg',
-  agentIdentityAvatarUrl: (_agentId: string) => '/logo.jpg',
   workspacePreview: async (_filePath: string) => { await delay(200); return { ok: true, type: 'text', content: '# OpenClaw Demo\n\nThis is a demo workspace file.\n\n## Features\n- AI-powered chatbot management\n- Multi-channel support\n- Skill plugins\n- Scheduled tasks' }; },
   workspaceNotes: async () => { await delay(100); return { ok: true, notes: { 'openclaw.json': '主配置文件', 'system-prompt.md': 'Bot 系统提示词' } }; },
   workspaceSetNote: async () => { await delay(200); return { ok: true }; },
@@ -348,6 +367,80 @@ export const mockApi = {
   clearEvents: async () => { await delay(100); return { ok: true }; },
   getTasks: async () => { await delay(80); return { ok: true, tasks: [] }; },
   getTaskDetail: async (_id: string) => { await delay(80); return { ok: true, task: null }; },
+
+  // --- Plugin Center ---
+  getPluginList: async () => { await delay(200); return { ok: true, plugins: JSON.parse(JSON.stringify(FAKE_PLUGINS)) }; },
+  getInstalledPlugins: async () => { await delay(150); return { ok: true, plugins: FAKE_PLUGINS.filter(p => p.installed) }; },
+  getPluginDetail: async (id: string) => { await delay(150); const p = FAKE_PLUGINS.find(x => x.id === id); return p ? { ok: true, plugin: JSON.parse(JSON.stringify(p)) } : { ok: false, error: 'not found' }; },
+  refreshPluginRegistry: async () => { await delay(800); return { ok: true }; },
+  installPlugin: async (pluginId: string, _source?: string) => { await delay(1000); return { ok: true, pluginId }; },
+  uninstallPlugin: async (_id: string, _cleanupConfig?: boolean) => { await delay(500); return { ok: true }; },
+  togglePlugin: async (_id: string, _enabled: boolean) => { await delay(200); return { ok: true }; },
+  getPluginConfig: async (_id: string) => { await delay(150); return { ok: true, config: {} }; },
+  updatePluginConfig: async (_id: string, _config: any) => { await delay(200); return { ok: true }; },
+  getPluginLogs: async (_id: string) => { await delay(200); return { ok: true, logs: [] }; },
+  updatePluginVersion: async (_id: string) => { await delay(1000); return { ok: true }; },
+
+  // --- Workflow Center ---
+  getWorkflowSettings: async () => { await delay(100); return { ok: true, settings: { enabled: true, maxConcurrent: 3, defaultTimeout: 300 } }; },
+  updateWorkflowSettings: async (_data: any) => { await delay(200); return { ok: true }; },
+  getWorkflowTemplates: async () => { await delay(200); return { ok: true, templates: JSON.parse(JSON.stringify(FAKE_WORKFLOW_TEMPLATES)) }; },
+  saveWorkflowTemplate: async (_template: any) => { await delay(300); return { ok: true }; },
+  deleteWorkflowTemplate: async (_id: string) => { await delay(200); return { ok: true }; },
+  generateWorkflowTemplate: async (_prompt: string, _category?: string, _settings?: any) => { await delay(2000); return { ok: true, template: { id: 'tpl-gen', name: '生成的模板', steps: [{ key: 'step1', type: 'agent', prompt: '执行任务' }] } }; },
+  getWorkflowRuns: async (_status?: string) => { await delay(200); return { ok: true, runs: JSON.parse(JSON.stringify(FAKE_WORKFLOW_RUNS)) }; },
+  getWorkflowRun: async (id: string) => { await delay(150); const r = FAKE_WORKFLOW_RUNS.find(x => x.id === id); return r ? { ok: true, run: JSON.parse(JSON.stringify(r)) } : { ok: false, error: 'not found' }; },
+  startWorkflowRun: async (_templateId: string, _data?: any) => { await delay(500); return { ok: true, runId: 'run-new-' + Date.now() }; },
+  controlWorkflowRun: async (_id: string, _action: string, _reply?: string) => { await delay(300); return { ok: true }; },
+  resendWorkflowArtifact: async (_id: string, _data: any) => { await delay(300); return { ok: true }; },
+  deleteWorkflowRun: async (_id: string) => { await delay(200); return { ok: true }; },
+
+  // --- Sessions ---
+  getSessions: async (_agent?: string) => { await delay(200); const sessions = _agent ? FAKE_SESSIONS.filter(s => s.agentId === _agent) : FAKE_SESSIONS; return { ok: true, sessions: JSON.parse(JSON.stringify(sessions)) }; },
+  getSessionDetail: async (id: string, _agent?: string) => { await delay(150); const s = FAKE_SESSIONS.find(x => x.id === id); return s ? { ok: true, session: { ...s, messages: [{ role: 'user', content: 'Hello', timestamp: Date.now() - 60000 }, { role: 'assistant', content: '你好！有什么可以帮你的？', timestamp: Date.now() - 59000 }] } } : { ok: false, error: 'not found' }; },
+  deleteSession: async (_id: string, _agent?: string) => { await delay(200); return { ok: true }; },
+
+  // --- Software & OpenClaw Instances ---
+  getSoftwareList: async () => { await delay(300); return { ok: true, software: [{ id: 'openclaw', name: 'OpenClaw', version: '4.2.1', installed: true }, { id: 'napcat', name: 'NapCat', version: '2.5.0', installed: true }, { id: 'node', name: 'Node.js', version: 'v20.11.0', installed: true }] }; },
+  getOpenClawInstances: async () => { await delay(200); return { ok: true, instances: [{ path: '/usr/local/bin/openclaw', version: '4.2.1', active: true }] }; },
+  installSoftware: async (_software: string) => { await delay(3000); return { ok: true }; },
+
+  // --- Panel Update ---
+  getPanelVersion: async () => { await delay(100); return { ok: true, version: '5.0.0', buildTime: new Date().toISOString() }; },
+  checkPanelUpdate: async () => { await delay(1000); return { ok: true, updateAvailable: false, currentVersion: '5.0.0', latestVersion: '5.0.0' }; },
+  doPanelUpdate: async () => { await delay(2000); return { ok: true }; },
+  getPanelUpdateProgress: async () => { await delay(100); return { ok: true, status: 'idle', progress: 0 }; },
+  generateUpdateToken: async () => { await delay(200); return { ok: true, token: 'demo-update-token' }; },
+  getUpdateHistory: async () => { await delay(200); return { ok: true, history: [] }; },
+
+  // --- System Diagnostics ---
+  systemDiagnose: async () => { await delay(500); return { ok: true, results: [{ id: 'config-valid', label: '配置文件格式', status: 'pass' }, { id: 'binary-found', label: 'OpenClaw 可执行文件', status: 'pass' }, { id: 'node-version', label: 'Node.js 版本', status: 'pass', detail: 'v20.11.0' }] }; },
+  checkConfig: async () => { await delay(300); return { ok: true, issues: [] }; },
+  fixConfig: async (_issueIds: string[]) => { await delay(500); return { ok: true, fixed: [] }; },
+
+  // --- NapCat Advanced ---
+  napcatRestart: async () => { await delay(500); return { ok: true }; },
+  napcatStatus: async () => { await delay(100); return { ok: true, connected: true, selfId: '2854196310', nickname: 'Demo Bot' }; },
+  napcatReconnectLogs: async () => { await delay(200); return { ok: true, logs: [] }; },
+  napcatReconnect: async () => { await delay(500); return { ok: true }; },
+  napcatMonitorConfig: async (_data: any) => { await delay(200); return { ok: true }; },
+  napcatDiagnose: async (_repair?: boolean) => { await delay(2000); return { ok: true, results: [{ id: 'napcat-conn', label: '连接状态', status: 'pass' }] }; },
+
+  // --- QQ Channel ---
+  getQQChannelState: async () => { await delay(200); return { ok: true, state: 'not_configured' }; },
+  setupQQChannel: async () => { await delay(1000); return { ok: true }; },
+  repairQQChannel: async () => { await delay(1000); return { ok: true }; },
+  cleanupQQChannel: async () => { await delay(500); return { ok: true }; },
+  deleteQQChannel: async () => { await delay(500); return { ok: true }; },
+
+  // --- Misc ---
+  checkModelHealth: async (_baseUrl: string, _apiKey: string, _apiType: string, _modelId?: string) => { await delay(1500); return { ok: true, healthy: true, latencyMs: 320, model: _modelId || 'default' }; },
+  aiChat: async (_messages: any[], _providerId?: string, _modelId?: string) => { await delay(1000); return { ok: true, reply: { role: 'assistant', content: '这是 Demo 模式的 AI 回复。在前端开发模式下，AI 聊天功能返回模拟数据。' } }; },
+  restartProcess: async () => { await delay(500); return { ok: true }; },
+  restartPanel: async () => { await delay(500); return { ok: true }; },
+  workspaceDownloadUrl: (_filePath: string) => '#',
+  workspacePreviewUrl: (_filePath: string) => '/logo.jpg',
+  agentIdentityAvatarUrl: (_agentId: string) => '/logo.jpg',
 };
 
 // Fake WebSocket data for demo

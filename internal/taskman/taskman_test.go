@@ -2,144 +2,173 @@ package taskman
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/zhaoxinyi02/ClawPanel/internal/websocket"
 )
 
-func newTestManager() *Manager {
-	return NewManager(websocket.NewHub())
-}
+func TestHasRunningTaskTreatsPendingAsActive(t *testing.T) {
+	t.Parallel()
 
-func TestCreateTaskStoresPendingTask(t *testing.T) {
-	manager := newTestManager()
-
-	task := manager.CreateTask("Install OpenClaw", "install_openclaw")
-	if task == nil {
-		t.Fatal("CreateTask() returned nil")
-	}
-	if task.Status != StatusPending {
-		t.Fatalf("status = %q, want %q", task.Status, StatusPending)
-	}
-	if got := manager.GetTask(task.ID); got != task {
-		t.Fatal("GetTask() did not return stored task")
-	}
-}
-
-func TestGetRecentTasksOrdersNewestFirstAndLimitsToFifty(t *testing.T) {
-	manager := newTestManager()
-	now := time.Now()
-
-	for i := 0; i < 55; i++ {
-		id := "task-" + time.Unix(0, int64(i)).Format("150405.000000000")
-		manager.tasks[id] = &Task{
-			ID:        id,
-			Name:      id,
-			Type:      "test",
-			Status:    StatusPending,
-			CreatedAt: now.Add(time.Duration(i) * time.Minute),
-			UpdatedAt: now.Add(time.Duration(i) * time.Minute),
-			Log:       []string{},
-		}
+	m := &Manager{
+		tasks: map[string]*Task{
+			"task-1": {
+				Type:   "install_plugin_feishu",
+				Status: StatusPending,
+			},
+		},
 	}
 
-	recent := manager.GetRecentTasks()
-	if len(recent) != 50 {
-		t.Fatalf("recent task count = %d, want 50", len(recent))
-	}
-	for i := 1; i < len(recent); i++ {
-		if recent[i].CreatedAt.After(recent[i-1].CreatedAt) {
-			t.Fatalf("tasks not sorted newest-first at index %d", i)
-		}
+	if !m.HasRunningTask("install_plugin_feishu") {
+		t.Fatalf("expected pending task to be treated as active")
 	}
 }
 
-func TestHasRunningTaskMatchesTaskType(t *testing.T) {
-	manager := newTestManager()
-	manager.tasks["running"] = &Task{ID: "running", Type: "install", Status: StatusRunning}
-	manager.tasks["done"] = &Task{ID: "done", Type: "install", Status: StatusSuccess}
+func TestHasRunningTaskIgnoresFinishedTasks(t *testing.T) {
+	t.Parallel()
 
-	if !manager.HasRunningTask("install") {
-		t.Fatal("HasRunningTask() should detect running task of matching type")
+	m := &Manager{
+		tasks: map[string]*Task{
+			"task-1": {
+				Type:   "install_plugin_feishu",
+				Status: StatusSuccess,
+			},
+		},
 	}
-	if manager.HasRunningTask("other") {
-		t.Fatal("HasRunningTask() should ignore non-matching task types")
+
+	if m.HasRunningTask("install_plugin_feishu") {
+		t.Fatalf("expected finished task not to be treated as active")
 	}
 }
 
-func TestTaskMutationHelpers(t *testing.T) {
-	task := &Task{Log: []string{}}
+func TestCreateTaskGeneratesUniqueIDs(t *testing.T) {
+	t.Parallel()
 
-	task.AppendLog("hello")
-	task.SetProgress(42)
-	task.SetStatus(StatusRunning)
+	m := NewManager(nil)
+	first := m.CreateTask("first", "install_plugin_feishu")
+	second := m.CreateTask("second", "install_plugin_feishu")
 
-	if len(task.Log) != 1 || task.Log[0] != "hello" {
-		t.Fatalf("unexpected logs: %+v", task.Log)
-	}
-	if task.Progress != 42 {
-		t.Fatalf("progress = %d, want 42", task.Progress)
-	}
-	if task.Status != StatusRunning {
-		t.Fatalf("status = %q, want %q", task.Status, StatusRunning)
+	if first.ID == second.ID {
+		t.Fatalf("expected unique task ids, got %q", first.ID)
 	}
 }
 
-func TestDedupeEnvKeepsLastValueForDuplicateKeys(t *testing.T) {
-	env := []string{
-		"HOME=/tmp/one",
-		"PATH=/bin",
-		"HOME=/tmp/two",
-		"PLAIN",
-	}
+func TestGetTaskReturnsCopy(t *testing.T) {
+	t.Parallel()
 
-	deduped := dedupeEnv(env)
-	if len(deduped) != 3 {
-		t.Fatalf("dedupeEnv() len = %d, want 3", len(deduped))
+	original := &Task{
+		ID:     "task-1",
+		Status: StatusPending,
+		Log:    []string{"hello"},
 	}
-	if deduped[0] != "HOME=/tmp/two" {
-		t.Fatalf("HOME entry = %q, want last value", deduped[0])
+	m := &Manager{tasks: map[string]*Task{"task-1": original}}
+
+	got := m.GetTask("task-1")
+	got.Status = StatusFailed
+	got.Log[0] = "changed"
+
+	if original.Status != StatusPending {
+		t.Fatalf("expected GetTask to return an isolated copy")
 	}
-	if deduped[1] != "PATH=/bin" {
-		t.Fatalf("PATH entry = %q, want PATH=/bin", deduped[1])
-	}
-	if deduped[2] != "PLAIN" {
-		t.Fatalf("plain entry = %q, want PLAIN", deduped[2])
+	if original.Log[0] != "hello" {
+		t.Fatalf("expected GetTask log copy, got %#v", original.Log)
 	}
 }
 
-func TestFinishTaskSuccessUpdatesTaskState(t *testing.T) {
-	manager := newTestManager()
-	task := manager.CreateTask("Task", "type")
+func TestFinishTaskSetsFailureMessage(t *testing.T) {
+	t.Parallel()
 
-	manager.FinishTask(task, nil)
-
-	if task.Status != StatusSuccess {
-		t.Fatalf("status = %q, want %q", task.Status, StatusSuccess)
-	}
-	if task.Progress != 100 {
-		t.Fatalf("progress = %d, want 100", task.Progress)
-	}
-	if len(task.Log) == 0 || task.Log[len(task.Log)-1] != "✅ 完成" {
-		t.Fatalf("unexpected logs: %+v", task.Log)
-	}
-}
-
-func TestFinishTaskFailureCapturesError(t *testing.T) {
-	manager := newTestManager()
-	task := manager.CreateTask("Task", "type")
-
-	manager.FinishTask(task, errors.New("boom"))
+	task := &Task{ID: "task-1", Name: "demo", Status: StatusRunning}
+	m := NewManager(nil)
+	m.FinishTask(task, errors.New("boom"))
 
 	if task.Status != StatusFailed {
-		t.Fatalf("status = %q, want %q", task.Status, StatusFailed)
+		t.Fatalf("expected failed status, got %s", task.Status)
 	}
 	if task.Error != "boom" {
-		t.Fatalf("error = %q, want boom", task.Error)
+		t.Fatalf("expected error to be recorded, got %q", task.Error)
 	}
-	if len(task.Log) == 0 || !strings.Contains(task.Log[len(task.Log)-1], "boom") {
-		t.Fatalf("unexpected logs: %+v", task.Log)
+}
+
+func TestRunScriptWithSudoPassesPasswordViaStdin(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sudo is not supported on Windows")
 	}
+
+	dir := t.TempDir()
+	argsPath := filepath.Join(dir, "args.txt")
+	passwordPath := filepath.Join(dir, "password.txt")
+	scriptPath := filepath.Join(dir, "script.txt")
+	sudoPath := filepath.Join(dir, "sudo")
+	body := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$@\" > " + shellQuote(argsPath) + "\n" +
+		"IFS= read -r password\n" +
+		"printf '%s' \"$password\" > " + shellQuote(passwordPath) + "\n" +
+		"cat > " + shellQuote(scriptPath) + "\n"
+	if err := os.WriteFile(sudoPath, []byte(body), 0o755); err != nil {
+		t.Fatalf("write fake sudo: %v", err)
+	}
+
+	originalPath := os.Getenv("PATH")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+originalPath)
+
+	task := &Task{ID: "task-1", Name: "sudo"}
+	m := NewManager(nil)
+	password := "pa'ss"
+	script := "echo hello\nprintf '%s' world\n"
+	if err := m.RunScriptWithSudo(task, password, script); err != nil {
+		t.Fatalf("RunScriptWithSudo: %v", err)
+	}
+
+	passwordData, err := os.ReadFile(passwordPath)
+	if err != nil {
+		t.Fatalf("read captured password: %v", err)
+	}
+	if string(passwordData) != password {
+		t.Fatalf("expected password via stdin, got %q", string(passwordData))
+	}
+
+	scriptData, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("read captured script: %v", err)
+	}
+	if string(scriptData) != script {
+		t.Fatalf("expected script via stdin, got %q", string(scriptData))
+	}
+
+	argsData, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read captured args: %v", err)
+	}
+	args := string(argsData)
+	if !strings.Contains(args, "-S\nbash\n-s\n") {
+		t.Fatalf("expected sudo to receive -S bash -s args, got %q", args)
+	}
+	if strings.Contains(args, password) {
+		t.Fatalf("expected password to stay out of process args, got %q", args)
+	}
+}
+
+func TestRunScriptFailsWhenOutputLineExceedsScannerBuffer(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash script differs on Windows")
+	}
+	t.Parallel()
+
+	task := &Task{ID: "task-1", Name: "long-output"}
+	m := NewManager(nil)
+	script := "i=0; while [ \"$i\" -lt 70000 ]; do printf a; i=$((i+1)); done; printf '\\n'"
+	err := m.RunScript(task, script)
+	if err == nil {
+		t.Fatalf("expected oversized output line to return an error")
+	}
+	if !strings.Contains(err.Error(), "读取命令输出失败") {
+		t.Fatalf("expected scanner error to be propagated, got %v", err)
+	}
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }

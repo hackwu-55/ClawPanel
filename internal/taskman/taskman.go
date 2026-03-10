@@ -2,9 +2,9 @@ package taskman
 
 import (
 	"bufio"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -44,9 +44,10 @@ type Task struct {
 
 // Manager 任务管理器
 type Manager struct {
-	tasks map[string]*Task
-	hub   *websocket.Hub
-	mu    sync.RWMutex
+	tasks  map[string]*Task
+	hub    *websocket.Hub
+	nextID uint64
+	mu     sync.RWMutex
 }
 
 // NewManager 创建任务管理器
@@ -62,7 +63,8 @@ func (m *Manager) CreateTask(name, taskType string) *Task {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	id := fmt.Sprintf("task-%d", time.Now().UnixMilli())
+	m.nextID++
+	id := fmt.Sprintf("task-%d", m.nextID)
 	task := &Task{
 		ID:        id,
 		Name:      name,
@@ -81,17 +83,23 @@ func (m *Manager) CreateTask(name, taskType string) *Task {
 // GetTask 获取任务
 func (m *Manager) GetTask(id string) *Task {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.tasks[id]
+	task := m.tasks[id]
+	m.mu.RUnlock()
+	return cloneTask(task)
 }
 
 // GetAllTasks 获取所有任务
 func (m *Manager) GetAllTasks() []*Task {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-	result := make([]*Task, 0, len(m.tasks))
+	tasks := make([]*Task, 0, len(m.tasks))
 	for _, t := range m.tasks {
-		result = append(result, t)
+		tasks = append(tasks, t)
+	}
+	m.mu.RUnlock()
+
+	result := make([]*Task, 0, len(tasks))
+	for _, t := range tasks {
+		result = append(result, cloneTask(t))
 	}
 	return result
 }
@@ -118,11 +126,46 @@ func (m *Manager) HasRunningTask(taskType string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, t := range m.tasks {
-		if t.Type == taskType && t.Status == StatusRunning {
+		if t.Type != taskType {
+			continue
+		}
+		t.mu.Lock()
+		status := t.Status
+		t.mu.Unlock()
+		if status == StatusPending || status == StatusRunning {
 			return true
 		}
 	}
 	return false
+}
+
+// StartTask marks a task as running and broadcasts the state change.
+func (m *Manager) StartTask(task *Task) {
+	if task == nil {
+		return
+	}
+	task.SetStatus(StatusRunning)
+	m.broadcastTaskUpdate(task)
+}
+
+func cloneTask(task *Task) *Task {
+	if task == nil {
+		return nil
+	}
+	task.mu.Lock()
+	defer task.mu.Unlock()
+	cp := Task{
+		ID:        task.ID,
+		Name:      task.Name,
+		Type:      task.Type,
+		Status:    task.Status,
+		Progress:  task.Progress,
+		Log:       append([]string(nil), task.Log...),
+		Error:     task.Error,
+		CreatedAt: task.CreatedAt,
+		UpdatedAt: task.UpdatedAt,
+	}
+	return &cp
 }
 
 // AppendLog 追加日志
@@ -149,8 +192,29 @@ func (t *Task) SetStatus(s TaskStatus) {
 	t.mu.Unlock()
 }
 
+func (t *Task) SetFailure(message string) {
+	t.mu.Lock()
+	t.Status = StatusFailed
+	t.Error = message
+	t.UpdatedAt = time.Now()
+	t.mu.Unlock()
+}
+
+func (t *Task) SetSuccess() {
+	t.mu.Lock()
+	t.Status = StatusSuccess
+	t.Progress = 100
+	t.Error = ""
+	t.UpdatedAt = time.Now()
+	t.mu.Unlock()
+}
+
 // RunCommand 运行命令并实时推送输出
 func (m *Manager) RunCommand(task *Task, name string, args ...string) error {
+	return m.runCommandWithInput(task, nil, name, args...)
+}
+
+func (m *Manager) runCommandWithInput(task *Task, input io.Reader, name string, args ...string) error {
 	task.SetStatus(StatusRunning)
 	m.broadcastTaskUpdate(task)
 
@@ -194,6 +258,7 @@ func (m *Manager) RunCommand(task *Task, name string, args ...string) error {
 	)
 
 	cmd.Env = dedupeEnv(env)
+	cmd.Stdin = input
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -211,6 +276,11 @@ func (m *Manager) RunCommand(task *Task, name string, args ...string) error {
 		line := scanner.Text()
 		task.AppendLog(line)
 		m.broadcastTaskLog(task, line)
+	}
+	if err := scanner.Err(); err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return fmt.Errorf("读取命令输出失败: %w", err)
 	}
 
 	if err := cmd.Wait(); err != nil {
@@ -251,14 +321,17 @@ func (m *Manager) RunScript(task *Task, script string) error {
 
 // RunScriptWithSudo 使用 sudo 运行脚本
 func (m *Manager) RunScriptWithSudo(task *Task, sudoPass, script string) error {
-	// Use base64 encoding to avoid all shell escaping issues (backslash, single/double quotes, etc.)
-	encoded := base64.StdEncoding.EncodeToString([]byte(script))
-	fullScript := fmt.Sprintf("echo '%s' | sudo -S bash -c \"$(echo %s | base64 -d)\"", sudoPass, encoded)
-	return m.RunCommand(task, "bash", "-c", fullScript)
+	if runtime.GOOS == "windows" {
+		return fmt.Errorf("Windows 不支持 sudo 提权执行")
+	}
+	return m.runCommandWithInput(task, strings.NewReader(sudoPass+"\n"+script), "sudo", "-S", "bash", "-s")
 }
 
 // broadcastTaskUpdate 广播任务状态更新
 func (m *Manager) broadcastTaskUpdate(task *Task) {
+	if m == nil || m.hub == nil || task == nil {
+		return
+	}
 	task.mu.Lock()
 	msg := map[string]interface{}{
 		"type": "task_update",
@@ -285,6 +358,9 @@ func (m *Manager) broadcastTaskUpdate(task *Task) {
 
 // broadcastTaskLog 广播任务日志行
 func (m *Manager) broadcastTaskLog(task *Task, line string) {
+	if m == nil || m.hub == nil || task == nil {
+		return
+	}
 	msg := map[string]interface{}{
 		"type":   "task_log",
 		"taskId": task.ID,
@@ -300,15 +376,11 @@ func (m *Manager) broadcastTaskLog(task *Task, line string) {
 // FinishTask 完成任务
 func (m *Manager) FinishTask(task *Task, err error) {
 	if err != nil {
-		task.SetStatus(StatusFailed)
-		task.mu.Lock()
-		task.Error = err.Error()
-		task.mu.Unlock()
+		task.SetFailure(err.Error())
 		task.AppendLog(fmt.Sprintf("❌ 失败: %v", err))
 		log.Printf("[TaskMan] 任务 %s (%s) 失败: %v", task.ID, task.Name, err)
 	} else {
-		task.SetStatus(StatusSuccess)
-		task.SetProgress(100)
+		task.SetSuccess()
 		task.AppendLog("✅ 完成")
 		log.Printf("[TaskMan] 任务 %s (%s) 完成", task.ID, task.Name)
 	}

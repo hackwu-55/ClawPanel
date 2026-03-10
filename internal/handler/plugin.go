@@ -84,11 +84,16 @@ func InstallPlugin(pm *plugin.Manager, tm *taskman.Manager) gin.HandlerFunc {
 			c.JSON(http.StatusConflict, gin.H{"ok": false, "error": conflicts[0], "conflicts": conflicts})
 			return
 		}
-		if tm != nil && tm.HasRunningTask("install_plugin_"+req.PluginID) {
+		if tm == nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "任务管理器未初始化"})
+			return
+		}
+		if tm.HasRunningTask("install_plugin_" + req.PluginID) {
 			c.JSON(http.StatusOK, gin.H{"ok": false, "error": "该插件已有安装任务正在进行中"})
 			return
 		}
 		task := tm.CreateTask("安装插件 "+req.PluginID, "install_plugin_"+req.PluginID)
+		tm.StartTask(task)
 		go func() {
 			task.AppendLog("🚀 开始安装插件 " + req.PluginID)
 			err := pm.InstallWithProgress(req.PluginID, req.Source, task.AppendLog)
@@ -106,11 +111,16 @@ func UninstallPlugin(pm *plugin.Manager, tm *taskman.Manager) gin.HandlerFunc {
 		if raw := strings.TrimSpace(c.Query("cleanupConfig")); raw != "" {
 			cleanupConfig = raw != "false" && raw != "0"
 		}
-		if tm != nil && tm.HasRunningTask("uninstall_plugin_"+id) {
+		if tm == nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "任务管理器未初始化"})
+			return
+		}
+		if tm.HasRunningTask("uninstall_plugin_" + id) {
 			c.JSON(http.StatusOK, gin.H{"ok": false, "error": "该插件已有卸载任务正在进行中"})
 			return
 		}
 		task := tm.CreateTask("卸载插件 "+id, "uninstall_plugin_"+id)
+		tm.StartTask(task)
 		go func() {
 			if cleanupConfig {
 				task.AppendLog("🧹 卸载后将一并清理对应通道配置")
@@ -199,13 +209,24 @@ func GetPluginLogs(pm *plugin.Manager) gin.HandlerFunc {
 }
 
 // UpdatePlugin updates a plugin to the latest version
-func UpdatePluginVersion(pm *plugin.Manager) gin.HandlerFunc {
+func UpdatePluginVersion(pm *plugin.Manager, tm *taskman.Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.Param("id")
-		if err := pm.Update(id); err != nil {
-			c.JSON(http.StatusOK, gin.H{"ok": false, "error": err.Error()})
+		if tm == nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": "任务管理器未初始化"})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"ok": true, "message": "插件更新成功"})
+		if tm.HasRunningTask("update_plugin_" + id) {
+			c.JSON(http.StatusOK, gin.H{"ok": false, "error": "该插件已有更新任务正在进行中"})
+			return
+		}
+		task := tm.CreateTask("更新插件 "+id, "update_plugin_"+id)
+		tm.StartTask(task)
+		go func() {
+			task.AppendLog("🔄 开始更新插件 " + id)
+			err := pm.Update(id)
+			tm.FinishTask(task, err)
+		}()
+		c.JSON(http.StatusOK, gin.H{"ok": true, "taskId": task.ID, "message": "插件更新任务已创建，请在消息中心查看进度"})
 	}
 }
