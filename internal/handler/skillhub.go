@@ -56,19 +56,24 @@ type skillHubSkillTrimmed struct {
 }
 
 var (
-	skillHubCache       *skillHubCatalog
-	skillHubCacheTime   time.Time
-	skillHubCacheMu     sync.Mutex
-	skillHubLastGoodURL string
+	skillHubCache           *skillHubCatalog
+	skillHubCacheTime       time.Time
+	skillHubCacheMu         sync.Mutex
+	skillHubLastGoodURL     string
+	skillHubNextRetryTime   time.Time
+	skillHubLastErr         string
+	skillHubRefreshInFlight bool
+	skillHubRefreshDone     chan struct{}
 )
 
 const (
-	skillHubCacheTTL      = 1 * time.Hour
-	skillHubBootstrapURL  = "https://cloudcache.tencentcs.com/qcloud/tea/app/data/skills.805f4f80.json"
-	skillHubHomepage      = "https://skillhub.tencent.com/"
-	skillHubMaxBodyBytes  = 16 << 20 // 16MB
-	skillHubFetchTimeout  = 25 * time.Second
-	skillHubCDNBase       = "https://cloudcache.tencentcs.com/qcloud/tea/app/data/"
+	skillHubCacheTTL     = 1 * time.Hour
+	skillHubBootstrapURL = "https://cloudcache.tencentcs.com/qcloud/tea/app/data/skills.805f4f80.json"
+	skillHubHomepage     = "https://skillhub.tencent.com/"
+	skillHubMaxBodyBytes = 16 << 20 // 16MB
+	skillHubFetchTimeout = 25 * time.Second
+	skillHubRetryBackoff = 5 * time.Minute
+	skillHubCDNBase      = "https://cloudcache.tencentcs.com/qcloud/tea/app/data/"
 )
 
 var skillHubJSONHashRe = regexp.MustCompile(`skills\.([0-9a-f]+)\.json`)
@@ -101,37 +106,35 @@ func discoverSkillHubJSONURL() (string, error) {
 	return skillHubCDNBase + filename, nil
 }
 
-// resolveSkillHubJSONURL tries dynamic discovery, then last-good, then bootstrap.
-func resolveSkillHubJSONURL() string {
+// resolveSkillHubJSONURLs returns candidate URLs in priority order without
+// mutating the last-good state. lastGoodURL is only updated after a successful
+// JSON fetch and decode.
+func resolveSkillHubJSONURLs(lastGoodURL string) []string {
+	urls := make([]string, 0, 3)
+	seen := make(map[string]struct{}, 3)
+	appendURL := func(url string) {
+		if url == "" {
+			return
+		}
+		if _, ok := seen[url]; ok {
+			return
+		}
+		seen[url] = struct{}{}
+		urls = append(urls, url)
+	}
 	url, err := discoverSkillHubJSONURL()
 	if err == nil && url != "" {
-		skillHubLastGoodURL = url
-		return url
+		appendURL(url)
 	}
-	if skillHubLastGoodURL != "" {
-		return skillHubLastGoodURL
-	}
-	return skillHubBootstrapURL
+	appendURL(lastGoodURL)
+	appendURL(skillHubBootstrapURL)
+	return urls
 }
 
-func loadSkillHubCatalog() (*skillHubCatalog, error) {
-	skillHubCacheMu.Lock()
-	defer skillHubCacheMu.Unlock()
-
-	if skillHubCache != nil && time.Since(skillHubCacheTime) < skillHubCacheTTL {
-		return skillHubCache, nil
-	}
-
-	jsonURL := resolveSkillHubJSONURL()
-	resp, err := skillHubHTTPClient.Get(jsonURL)
+func fetchSkillHubCatalog(url string) (*skillHubCatalog, error) {
+	resp, err := skillHubHTTPClient.Get(url)
 	if err != nil {
-		// if dynamic URL failed, try bootstrap as last resort
-		if jsonURL != skillHubBootstrapURL {
-			resp, err = skillHubHTTPClient.Get(skillHubBootstrapURL)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("fetch skillhub JSON: %w", err)
-		}
+		return nil, fmt.Errorf("fetch skillhub JSON: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -144,10 +147,112 @@ func loadSkillHubCatalog() (*skillHubCatalog, error) {
 	if err := dec.Decode(&catalog); err != nil {
 		return nil, fmt.Errorf("parse skillhub JSON: %w", err)
 	}
-
-	skillHubCache = &catalog
-	skillHubCacheTime = time.Now()
+	if catalog.Skills == nil {
+		return nil, fmt.Errorf("skillhub JSON missing skills list")
+	}
+	if catalog.Featured == nil {
+		catalog.Featured = []string{}
+	}
+	if catalog.Categories == nil {
+		catalog.Categories = map[string][]string{}
+	}
 	return &catalog, nil
+}
+
+func refreshSkillHubCatalog(lastGoodURL string) (*skillHubCatalog, string, error) {
+	var lastErr error
+	for _, jsonURL := range resolveSkillHubJSONURLs(lastGoodURL) {
+		catalog, err := fetchSkillHubCatalog(jsonURL)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		return catalog, jsonURL, nil
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("failed to resolve skillhub catalog URL")
+	}
+	return nil, "", lastErr
+}
+
+func loadSkillHubCatalog() (*skillHubCatalog, error) {
+	for {
+		now := time.Now()
+
+		skillHubCacheMu.Lock()
+		if skillHubCache != nil && now.Sub(skillHubCacheTime) < skillHubCacheTTL {
+			cached := skillHubCache
+			skillHubCacheMu.Unlock()
+			return cached, nil
+		}
+		if skillHubCache != nil && !skillHubNextRetryTime.IsZero() && now.Before(skillHubNextRetryTime) {
+			cached := skillHubCache
+			skillHubCacheMu.Unlock()
+			return cached, nil
+		}
+		if skillHubRefreshInFlight {
+			waitCh := skillHubRefreshDone
+			cached := skillHubCache
+			skillHubCacheMu.Unlock()
+
+			if cached != nil {
+				return cached, nil
+			}
+			if waitCh != nil {
+				<-waitCh
+			}
+
+			skillHubCacheMu.Lock()
+			cached = skillHubCache
+			lastErr := skillHubLastErr
+			skillHubCacheMu.Unlock()
+			if cached != nil {
+				return cached, nil
+			}
+			if lastErr != "" {
+				return nil, fmt.Errorf("%s", lastErr)
+			}
+			continue
+		}
+
+		staleCache := skillHubCache
+		lastGoodURL := skillHubLastGoodURL
+		doneCh := make(chan struct{})
+		skillHubRefreshInFlight = true
+		skillHubRefreshDone = doneCh
+		skillHubCacheMu.Unlock()
+
+		catalog, jsonURL, err := refreshSkillHubCatalog(lastGoodURL)
+
+		skillHubCacheMu.Lock()
+		skillHubRefreshInFlight = false
+		close(doneCh)
+		skillHubRefreshDone = nil
+
+		if err == nil {
+			skillHubLastGoodURL = jsonURL
+			skillHubCache = catalog
+			skillHubCacheTime = time.Now()
+			skillHubNextRetryTime = time.Time{}
+			skillHubLastErr = ""
+			skillHubCacheMu.Unlock()
+			return catalog, nil
+		}
+
+		skillHubLastErr = err.Error()
+		if staleCache != nil {
+			skillHubNextRetryTime = time.Now().Add(skillHubRetryBackoff)
+			cached := skillHubCache
+			if cached == nil {
+				cached = staleCache
+			}
+			skillHubCacheMu.Unlock()
+			return cached, nil
+		}
+		skillHubNextRetryTime = time.Time{}
+		skillHubCacheMu.Unlock()
+		return nil, err
+	}
 }
 
 func trimSkillHubSkills(skills []skillHubSkillItem) []skillHubSkillTrimmed {
