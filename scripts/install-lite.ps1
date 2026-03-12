@@ -49,4 +49,4 @@ Start-Sleep -Seconds 1
 sc.exe create $ServiceName binPath= "`"$InstallDir\clawpanel-lite.exe`"" start= auto DisplayName= "ClawPanel Lite v$Version" | Out-Null
 sc.exe start $ServiceName | Out-Null
 
-Write-Host "ClawPanel Lite Windows 安装完成: $InstallDir"
+Write-Host "ClawPanel Lite for Windows installed at: $InstallDir"
