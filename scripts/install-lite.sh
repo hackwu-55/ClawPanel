@@ -78,7 +78,7 @@ download_file() {
   local url=$1
   local dest=$2
   if command -v curl >/dev/null 2>&1; then
-    curl --connect-timeout 10 --max-time 300 --retry 2 --retry-delay 2 --retry-connrefused -fL "$url" -o "$dest"
+    curl --connect-timeout 10 --max-time 300 --retry 2 --retry-delay 2 -fL "$url" -o "$dest"
   else
     wget -T 300 --tries=2 -O "$dest" "$url"
   fi

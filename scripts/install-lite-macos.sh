@@ -93,7 +93,7 @@ choose_download_source() {
   fi
 }
 
-download_file() { curl --connect-timeout 10 --max-time 300 --retry 2 --retry-delay 2 --retry-connrefused -fL "$1" -o "$2"; }
+download_file() { curl --connect-timeout 10 --max-time 300 --retry 2 --retry-delay 2 -fL "$1" -o "$2"; }
 
 choose_download_source
 [[ "$(uname -s)" == "Darwin" ]] || err "install-lite-macos.sh 只能在 macOS 上运行；你当前系统是 $(uname -s)。Linux 请使用 install-lite.sh。"
