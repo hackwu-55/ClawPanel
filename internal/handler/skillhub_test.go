@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -284,9 +285,8 @@ func TestInstallSkillHubCLIInstallsFromOfficialKit(t *testing.T) {
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatalf("create bin dir: %v", err)
 	}
-	linkSystemCommands(t, binDir, "bash", "mkdir", "chmod", "cat")
-	t.Setenv("HOME", home)
-	t.Setenv("PATH", binDir)
+	setTestHomeEnv(t, home)
+	prependTestPath(t, binDir)
 	skillHubBinaryCandidatePaths = nil
 
 	archiveBytes := buildSkillHubInstallArchive(t, "bundle/cli/install.sh", `#!/bin/sh
@@ -333,10 +333,10 @@ printf 'installed cli'
 	if !resp.OK || !resp.Installed {
 		t.Fatalf("unexpected response: %+v", resp)
 	}
-	if filepath.Base(resp.BinPath) != "skillhub" {
+	if filepath.Base(resp.BinPath) != testExecutableBase("skillhub") {
 		t.Fatalf("expected skillhub binary path, got %q", resp.BinPath)
 	}
-	if _, err := os.Stat(filepath.Join(home, ".local", "bin", "skillhub")); err != nil {
+	if _, err := os.Stat(filepath.Join(home, ".local", "bin", testExecutableBase("skillhub"))); err != nil {
 		t.Fatalf("expected installed binary: %v", err)
 	}
 	if !strings.Contains(resp.Output, "installed cli") {
@@ -356,24 +356,12 @@ func TestInstallSkillHubSkillRunsCommandInSelectedWorkspace(t *testing.T) {
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatalf("create bin dir: %v", err)
 	}
-	linkSystemCommands(t, binDir, "mkdir")
 	cfg := &config.Config{OpenClawDir: openClawDir, OpenClawWork: workspace}
 	logPath := filepath.Join(root, "skillhub-call.log")
-	binPath := filepath.Join(root, "skillhub")
-	script := `#!/bin/sh
-set -eu
-printf 'pwd=%s\n' "$PWD" > "` + logPath + `"
-printf 'args=%s %s\n' "$1" "$2" >> "` + logPath + `"
-printf 'pythonhttpsverify=%s\n' "${PYTHONHTTPSVERIFY:-}" >> "` + logPath + `"
-printf 'sslnoverify=%s\n' "${SSL_NO_VERIFY:-}" >> "` + logPath + `"
-mkdir -p "$PWD/skills/$2"
-printf 'installed %s' "$2"
-`
-	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake skillhub: %v", err)
-	}
+	binPath := filepath.Join(root, testExecutableBase("skillhub"))
+	writeFakeSkillHubCommand(t, binPath, logPath, true)
 	t.Setenv("SKILLHUB_BIN", binPath)
-	t.Setenv("PATH", binDir)
+	prependTestPath(t, binDir)
 	skillHubBinaryCandidatePaths = nil
 
 	r := gin.New()
@@ -418,12 +406,8 @@ func TestInstallSkillHubSkillRejectsExistingWorkspaceTarget(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(workspace, "skills", "demo-skill"), 0o755); err != nil {
 		t.Fatalf("create existing skill dir: %v", err)
 	}
-	binPath := filepath.Join(root, "skillhub")
-	if err := os.WriteFile(binPath, []byte(`#!/bin/sh
-exit 0
-`), 0o755); err != nil {
-		t.Fatalf("write fake skillhub: %v", err)
-	}
+	binPath := filepath.Join(root, testExecutableBase("skillhub"))
+	writeFakeSkillHubCommand(t, binPath, filepath.Join(root, "unused.log"), false)
 	t.Setenv("SKILLHUB_BIN", binPath)
 	skillHubBinaryCandidatePaths = nil
 
@@ -454,22 +438,12 @@ func TestInstallSkillHubSkillGlobalTargetRunsInManagedRoot(t *testing.T) {
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatalf("create bin dir: %v", err)
 	}
-	linkSystemCommands(t, binDir, "mkdir")
 	cfg := &config.Config{OpenClawDir: openClawDir, OpenClawWork: workspace}
 	logPath := filepath.Join(root, "skillhub-global.log")
-	binPath := filepath.Join(root, "skillhub")
-	script := `#!/bin/sh
-set -eu
-printf 'pwd=%s\n' "$PWD" > "` + logPath + `"
-printf 'args=%s %s\n' "$1" "$2" >> "` + logPath + `"
-mkdir -p "$PWD/skills/$2"
-printf 'installed %s' "$2"
-`
-	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake skillhub: %v", err)
-	}
+	binPath := filepath.Join(root, testExecutableBase("skillhub"))
+	writeFakeSkillHubCommand(t, binPath, logPath, false)
 	t.Setenv("SKILLHUB_BIN", binPath)
-	t.Setenv("PATH", binDir)
+	prependTestPath(t, binDir)
 	skillHubBinaryCandidatePaths = nil
 
 	r := gin.New()
@@ -687,13 +661,19 @@ func buildSkillHubInstallArchive(t *testing.T, installerPath string, installerCo
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	tarWriter := tar.NewWriter(gz)
+	installerDir := filepath.Dir(installerPath)
 	entries := []struct {
 		name string
 		body string
 		mode int64
 	}{
-		{name: filepath.Dir(installerPath), mode: 0o755},
+		{name: installerDir, mode: 0o755},
 		{name: installerPath, body: installerContent, mode: 0o755},
+		{name: filepath.Join(installerDir, "skills_store_cli.py"), body: "print('ok')\n", mode: 0o644},
+		{name: filepath.Join(installerDir, "skills_upgrade.py"), body: "print('upgrade')\n", mode: 0o644},
+		{name: filepath.Join(installerDir, "version.json"), body: `{"version":"1.0.0"}` + "\n", mode: 0o644},
+		{name: filepath.Join(installerDir, "metadata.json"), body: `{"name":"skillhub"}` + "\n", mode: 0o644},
+		{name: filepath.Join(installerDir, "skills_index.local.json"), body: `{"skills":[]}` + "\n", mode: 0o644},
 	}
 	for _, entry := range entries {
 		header := &tar.Header{Name: entry.name, Mode: entry.mode}
@@ -732,4 +712,118 @@ func linkSystemCommands(t *testing.T, targetDir string, names ...string) {
 			t.Fatalf("symlink %s: %v", name, err)
 		}
 	}
+}
+
+func setTestHomeEnv(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+}
+
+func prependTestPath(t *testing.T, dir string) {
+	t.Helper()
+	orig := sanitizeTestPath(os.Getenv("PATH"))
+	if orig == "" {
+		t.Setenv("PATH", dir)
+		return
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+orig)
+}
+
+func sanitizeTestPath(pathValue string) string {
+	if pathValue == "" {
+		return ""
+	}
+	skillHubPath, err := exec.LookPath("skillhub")
+	if err != nil {
+		return pathValue
+	}
+	removeDir := filepath.Dir(skillHubPath)
+	parts := strings.Split(pathValue, string(os.PathListSeparator))
+	filtered := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		if samePathForTest(part, removeDir) {
+			continue
+		}
+		filtered = append(filtered, part)
+	}
+	return strings.Join(filtered, string(os.PathListSeparator))
+}
+
+func samePathForTest(left, right string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(filepath.Clean(left), filepath.Clean(right))
+	}
+	return filepath.Clean(left) == filepath.Clean(right)
+}
+
+func testExecutableBase(name string) string {
+	if runtime.GOOS == "windows" {
+		return name + ".cmd"
+	}
+	return name
+}
+
+func writeFakeSkillHubCommand(t *testing.T, path, logPath string, includeEnv bool) {
+	t.Helper()
+	var content string
+	var perm os.FileMode = 0o755
+	if runtime.GOOS == "windows" {
+		perm = 0o644
+		content = buildWindowsFakeSkillHubCommand(logPath, includeEnv)
+	} else {
+		content = buildUnixFakeSkillHubCommand(logPath, includeEnv)
+	}
+	if err := os.WriteFile(path, []byte(content), perm); err != nil {
+		t.Fatalf("write fake skillhub: %v", err)
+	}
+}
+
+func buildUnixFakeSkillHubCommand(logPath string, includeEnv bool) string {
+	lines := []string{
+		"#!/bin/sh",
+		"set -eu",
+		"printf 'pwd=%s\\n' \"$PWD\" > " + singleQuote(logPath),
+		"printf 'args=%s %s\\n' \"$1\" \"$2\" >> " + singleQuote(logPath),
+	}
+	if includeEnv {
+		lines = append(lines,
+			"printf 'pythonhttpsverify=%s\\n' \"${PYTHONHTTPSVERIFY:-}\" >> "+singleQuote(logPath),
+			"printf 'sslnoverify=%s\\n' \"${SSL_NO_VERIFY:-}\" >> "+singleQuote(logPath),
+		)
+	}
+	lines = append(lines,
+		"mkdir -p \"$PWD/skills/$2\"",
+		"printf 'installed %s' \"$2\"",
+		"",
+	)
+	return strings.Join(lines, "\n")
+}
+
+func buildWindowsFakeSkillHubCommand(logPath string, includeEnv bool) string {
+	lines := []string{
+		"@echo off",
+		"setlocal",
+		`> "` + strings.ReplaceAll(logPath, `"`, `""`) + `" echo pwd=%CD%`,
+		`>> "` + strings.ReplaceAll(logPath, `"`, `""`) + `" echo args=%~1 %~2`,
+	}
+	if includeEnv {
+		lines = append(lines,
+			`>> "`+strings.ReplaceAll(logPath, `"`, `""`)+`" echo pythonhttpsverify=%PYTHONHTTPSVERIFY%`,
+			`>> "`+strings.ReplaceAll(logPath, `"`, `""`)+`" echo sslnoverify=%SSL_NO_VERIFY%`,
+		)
+	}
+	lines = append(lines,
+		`mkdir "%CD%\skills\%~2" >nul 2>nul`,
+		`<nul set /p "=installed %~2"`,
+		"",
+	)
+	return strings.Join(lines, "\r\n")
+}
+
+func singleQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }

@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -620,16 +621,8 @@ func resolveSkillHubBinary() (string, error) {
 		}
 		seen[candidate] = struct{}{}
 
-		if filepath.Base(candidate) == candidate && !strings.Contains(candidate, string(os.PathSeparator)) {
-			if resolved, err := exec.LookPath(candidate); err == nil {
-				return resolved, nil
-			}
-			continue
-		}
-
-		info, err := os.Stat(candidate)
-		if err == nil && !info.IsDir() {
-			return candidate, nil
+		if resolved, err := exec.LookPath(candidate); err == nil {
+			return resolved, nil
 		}
 	}
 	return "", fmt.Errorf("SkillHub CLI not found; install SkillHub CLI first")
@@ -650,15 +643,220 @@ func installSkillHubCLI(ctx context.Context) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	output, err := runCommandCapture(ctx, filepath.Dir(installerPath), "bash", installerPath)
+	output, err := installSkillHubCLIFromKit(filepath.Dir(installerPath))
 	if err != nil {
-		return "", output, wrapSkillHubCommandError("install SkillHub CLI", err, output)
+		return "", "", wrapSkillHubCommandError("install SkillHub CLI", err, "")
 	}
 	binPath, err := resolveSkillHubBinary()
 	if err != nil {
 		return "", output, err
 	}
 	return binPath, output, nil
+}
+
+func installSkillHubCLIFromKit(cliSourceDir string) (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve user home: %w", err)
+	}
+	pythonCmd, pythonArgs, err := detectSkillHubPython()
+	if err != nil {
+		return "", err
+	}
+
+	installBase := filepath.Join(homeDir, ".skillhub")
+	binDir := filepath.Join(homeDir, ".local", "bin")
+	cliTarget := filepath.Join(installBase, "skills_store_cli.py")
+	upgradeTarget := filepath.Join(installBase, "skills_upgrade.py")
+	versionTarget := filepath.Join(installBase, "version.json")
+	metadataTarget := filepath.Join(installBase, "metadata.json")
+	indexTarget := filepath.Join(installBase, "skills_index.local.json")
+	configTarget := filepath.Join(installBase, "config.json")
+
+	if err := os.MkdirAll(installBase, 0o755); err != nil {
+		return "", fmt.Errorf("create SkillHub home: %w", err)
+	}
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		return "", fmt.Errorf("create SkillHub bin dir: %w", err)
+	}
+
+	copyTargets := map[string]string{
+		filepath.Join(cliSourceDir, "skills_store_cli.py"):     cliTarget,
+		filepath.Join(cliSourceDir, "skills_upgrade.py"):       upgradeTarget,
+		filepath.Join(cliSourceDir, "version.json"):            versionTarget,
+		filepath.Join(cliSourceDir, "metadata.json"):           metadataTarget,
+		filepath.Join(cliSourceDir, "skills_index.local.json"): indexTarget,
+	}
+	for src, dst := range copyTargets {
+		if err := copySkillHubInstallFile(src, dst); err != nil {
+			return "", err
+		}
+	}
+	if err := os.Chmod(cliTarget, 0o755); err != nil {
+		return "", fmt.Errorf("mark SkillHub CLI executable: %w", err)
+	}
+	if _, err := os.Stat(configTarget); os.IsNotExist(err) {
+		configData := []byte("{\n  \"self_update_url\": \"https://skillhub-1388575217.cos.ap-guangzhou.myqcloud.com/version.json\"\n}\n")
+		if err := os.WriteFile(configTarget, configData, 0o644); err != nil {
+			return "", fmt.Errorf("create SkillHub config: %w", err)
+		}
+	} else if err != nil {
+		return "", fmt.Errorf("check SkillHub config: %w", err)
+	}
+
+	wrapperPath, legacyWrapperPath, err := writeSkillHubWrappers(binDir, cliTarget, pythonCmd, pythonArgs)
+	if err != nil {
+		return "", err
+	}
+
+	output := strings.Join([]string{
+		"Install complete.",
+		"installed cli",
+		"  mode: cli",
+		"  cli: " + wrapperPath,
+		"  index: " + indexTarget,
+		"",
+		"Quick check:",
+		"  skillhub search calendar",
+		"  legacy: " + legacyWrapperPath,
+	}, "\n")
+	return output, nil
+}
+
+func detectSkillHubPython() (string, []string, error) {
+	candidates := [][]string{
+		{"python3"},
+		{"python"},
+	}
+	if runtime.GOOS == "windows" {
+		candidates = append([][]string{{"py", "-3"}}, candidates...)
+	}
+	for _, candidate := range candidates {
+		if _, err := exec.LookPath(candidate[0]); err == nil {
+			return candidate[0], candidate[1:], nil
+		}
+	}
+	if runtime.GOOS == "windows" {
+		return "", nil, fmt.Errorf("python runtime not found; install Python or py launcher first")
+	}
+	return "", nil, fmt.Errorf("python3 runtime not found")
+}
+
+func copySkillHubInstallFile(srcPath, dstPath string) error {
+	srcFile, err := os.Open(srcPath)
+	if err != nil {
+		return fmt.Errorf("open SkillHub kit file %s: %w", filepath.Base(srcPath), err)
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.Create(dstPath)
+	if err != nil {
+		return fmt.Errorf("create SkillHub target file %s: %w", filepath.Base(dstPath), err)
+	}
+	defer dstFile.Close()
+
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		return fmt.Errorf("copy SkillHub file %s: %w", filepath.Base(dstPath), err)
+	}
+	return nil
+}
+
+func writeSkillHubWrappers(binDir, cliTarget, pythonCmd string, pythonArgs []string) (string, string, error) {
+	if runtime.GOOS == "windows" {
+		return writeSkillHubWindowsWrappers(binDir, cliTarget, pythonCmd, pythonArgs)
+	}
+	return writeSkillHubUnixWrappers(binDir, cliTarget, pythonCmd, pythonArgs)
+}
+
+func writeSkillHubUnixWrappers(binDir, cliTarget, pythonCmd string, pythonArgs []string) (string, string, error) {
+	wrapperPath := filepath.Join(binDir, "skillhub")
+	legacyPath := filepath.Join(binDir, "oc-skills")
+	pythonInvocation := strings.Join(append([]string{shellQuote(pythonCmd)}, shellQuoteSlice(pythonArgs)...), " ")
+	wrapperContent := strings.Join([]string{
+		"#!/bin/sh",
+		"set -eu",
+		"",
+		"CLI=" + shellQuote(cliTarget),
+		"if [ ! -f \"$CLI\" ]; then",
+		"  echo \"Error: CLI not found at $CLI\" >&2",
+		"  exit 1",
+		"fi",
+		"",
+		"exec " + pythonInvocation + " \"$CLI\" \"$@\"",
+		"",
+	}, "\n")
+	legacyContent := strings.Join([]string{
+		"#!/bin/sh",
+		"set -eu",
+		"exec " + shellQuote(wrapperPath) + " \"$@\"",
+		"",
+	}, "\n")
+	if err := os.WriteFile(wrapperPath, []byte(wrapperContent), 0o755); err != nil {
+		return "", "", fmt.Errorf("write SkillHub wrapper: %w", err)
+	}
+	if err := os.WriteFile(legacyPath, []byte(legacyContent), 0o755); err != nil {
+		return "", "", fmt.Errorf("write SkillHub legacy wrapper: %w", err)
+	}
+	return wrapperPath, legacyPath, nil
+}
+
+func writeSkillHubWindowsWrappers(binDir, cliTarget, pythonCmd string, pythonArgs []string) (string, string, error) {
+	wrapperPath := filepath.Join(binDir, "skillhub.cmd")
+	legacyPath := filepath.Join(binDir, "oc-skills.cmd")
+	pythonInvocation := strings.Join(append([]string{cmdQuote(pythonCmd)}, cmdQuoteSlice(pythonArgs)...), " ")
+	cliValue := cmdSetValue(cliTarget)
+	wrapperContent := strings.Join([]string{
+		"@echo off",
+		"setlocal",
+		"set \"CLI=" + cliValue + "\"",
+		"if not exist \"%CLI%\" (",
+		"  >&2 echo Error: CLI not found at %CLI%",
+		"  exit /b 1",
+		")",
+		pythonInvocation + " \"%CLI%\" %*",
+		"",
+	}, "\r\n")
+	legacyContent := strings.Join([]string{
+		"@echo off",
+		"setlocal",
+		"call \"" + cmdSetValue(wrapperPath) + "\" %*",
+		"",
+	}, "\r\n")
+	if err := os.WriteFile(wrapperPath, []byte(wrapperContent), 0o644); err != nil {
+		return "", "", fmt.Errorf("write SkillHub wrapper: %w", err)
+	}
+	if err := os.WriteFile(legacyPath, []byte(legacyContent), 0o644); err != nil {
+		return "", "", fmt.Errorf("write SkillHub legacy wrapper: %w", err)
+	}
+	return wrapperPath, legacyPath, nil
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
+}
+
+func shellQuoteSlice(values []string) []string {
+	quoted := make([]string, 0, len(values))
+	for _, value := range values {
+		quoted = append(quoted, shellQuote(value))
+	}
+	return quoted
+}
+
+func cmdQuote(value string) string {
+	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
+}
+
+func cmdQuoteSlice(values []string) []string {
+	quoted := make([]string, 0, len(values))
+	for _, value := range values {
+		quoted = append(quoted, cmdQuote(value))
+	}
+	return quoted
+}
+
+func cmdSetValue(value string) string {
+	return strings.ReplaceAll(value, `"`, `""`)
 }
 
 func downloadSkillHubInstallKit(ctx context.Context, targetPath string) error {
@@ -779,7 +977,16 @@ func runCommandCapture(ctx context.Context, dir, name string, args ...string) (s
 }
 
 func runCommandCaptureWithEnv(ctx context.Context, dir string, extraEnv []string, name string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmdName := name
+	cmdArgs := args
+	if runtime.GOOS == "windows" {
+		ext := strings.ToLower(filepath.Ext(name))
+		if ext == ".cmd" || ext == ".bat" {
+			cmdName = "cmd.exe"
+			cmdArgs = append([]string{"/c", name}, args...)
+		}
+	}
+	cmd := exec.CommandContext(ctx, cmdName, cmdArgs...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), extraEnv...)
 	output, err := cmd.CombinedOutput()
