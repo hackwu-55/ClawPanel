@@ -248,6 +248,8 @@ const en: Translations = {
     clawHubTitle: 'ClawHub Skill Store',
     clawHubSubtitle: 'Discover community-contributed skills',
     syncStore: 'Sync Store',
+    storeNotLoaded: 'Store Not Loaded',
+    storeNotLoadedHint: 'Click the button below to manually load skill store data',
     syncing: 'Syncing...',
     visitSite: 'Visit Site',
     syncSuccess: 'Synced successfully, found {n} skills',

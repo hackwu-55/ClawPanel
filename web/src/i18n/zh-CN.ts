@@ -248,6 +248,8 @@ const zhCN: Translations = {
     clawHubTitle: 'ClawHub 技能商店',
     clawHubSubtitle: '浏览和安装社区技能',
     syncStore: '同步商店',
+    storeNotLoaded: '商店尚未加载',
+    storeNotLoadedHint: '点击下方按钮手动加载技能商店数据',
     syncing: '同步中...',
     visitSite: '前往官网',
     syncSuccess: '同步成功，获取到 {n} 个技能',

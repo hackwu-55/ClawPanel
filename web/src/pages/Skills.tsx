@@ -185,14 +185,7 @@ export default function Skills() {
 
   useEffect(() => { loadAgents(); }, []);
   useEffect(() => { loadSkills(); }, [selectedAgent]);
-  useEffect(() => { if (tab === 'clawhub') loadClawHub(); }, [tab, selectedAgent, storeInstallTarget]);
-  // Eagerly preload store counts in background so badge shows real number before user clicks the tab
-  useEffect(() => {
-    if (!storeEverLoaded && !hubLoading && !skillHubLoading) {
-      loadClawHub();
-      loadSkillHub();
-    }
-  }, [selectedAgent]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Store data is loaded on-demand via manual refresh buttons only
   useEffect(() => { return () => { if (debounceRef.current) clearTimeout(debounceRef.current); }; }, []);
 
   const loadAgents = async () => {
@@ -284,18 +277,12 @@ export default function Skills() {
     } finally { setSkillHubCliLoading(false); }
   };
 
+  // SkillHub CLI status: only load once when user switches to skillhub source
   useEffect(() => {
-    if (tab === 'clawhub') {
-      if (!skillHubCatalog && !skillHubLoading) loadSkillHub();
-      if (hubSource === 'skillhub' && !skillHubCliStatus && !skillHubCliLoading) loadSkillHubStatus();
+    if (tab === 'clawhub' && hubSource === 'skillhub' && !skillHubCliStatus && !skillHubCliLoading) {
+      loadSkillHubStatus();
     }
-  }, [tab, hubSource, selectedAgent, storeInstallTarget, skillHubCatalog, skillHubLoading, skillHubCliStatus, skillHubCliLoading]);
-
-  useEffect(() => {
-    if (tab === 'clawhub') {
-      loadSkillHub();
-    }
-  }, [selectedAgent, storeInstallTarget]);
+  }, [tab, hubSource]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const getSkillScope = (source: string): Exclude<SkillScopeFilter, 'all'> => {
     switch (source) {
@@ -827,7 +814,7 @@ export default function Skills() {
         </button>
         <button onClick={() => setTab('clawhub')}
           className={`${modern ? 'px-3.5 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 border' : 'pb-3 text-sm font-medium border-b-2 transition-all flex items-center gap-2'} ${tab === 'clawhub' ? (modern ? 'border-blue-100/80 bg-blue-50/85 dark:bg-blue-900/20 dark:border-blue-800/40 text-blue-700 dark:text-blue-300 shadow-sm' : 'border-violet-600 text-violet-700 dark:text-violet-400') : (modern ? 'border-transparent text-gray-500 hover:bg-white/70 dark:hover:bg-slate-800/70 hover:text-gray-700 dark:hover:text-gray-300' : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300')}`}>
-          <Globe size={16} />{t.skills.storeTab} <span className="bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-xs px-1.5 py-0.5 rounded-full">{storeEverLoaded ? storeBadgeCount : (hubLoading || skillHubLoading ? <Loader2 size={12} className="inline animate-spin" /> : '\u00b7\u00b7\u00b7')}</span>
+          <Globe size={16} />{t.skills.storeTab} <span className="bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-xs px-1.5 py-0.5 rounded-full">{storeEverLoaded ? storeBadgeCount : '\u00b7\u00b7\u00b7'}</span>
         </button>
       </div>
 
@@ -1121,6 +1108,16 @@ export default function Skills() {
                 ))}
               </div>
             </div>
+          ) : clawHubSkills.length === 0 && !storeEverLoaded ? (
+            <div className="flex flex-col items-center justify-center py-20 text-gray-400 border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-xl">
+              <Globe size={36} className="opacity-20 mb-3" />
+              <p className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">{t.skills.storeNotLoaded}</p>
+              <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">{t.skills.storeNotLoadedHint}</p>
+              <button onClick={handleSearchClawHub}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-violet-600 text-white hover:bg-violet-700 shadow-sm transition-colors">
+                <RefreshCw size={14} /> {t.skills.syncStore}
+              </button>
+            </div>
           ) : (
             <div className={storeGridClasses}>
               {hubFiltered.length === 0 ? (
@@ -1343,9 +1340,14 @@ export default function Skills() {
               </div>
             </div>
           ) : !skillHubCatalog ? (
-            <div className="flex flex-col items-center justify-center py-16 text-gray-400 border-2 border-dashed border-gray-100 dark:border-gray-800 rounded-xl">
-              <Star size={32} className="opacity-20 mb-2" />
-              <p className="text-sm">{t.skills.skillHubEmpty || '\u70b9\u51fb\u540c\u6b65\u52a0\u8f7d SkillHub \u76ee\u5f55'}</p>
+            <div className="flex flex-col items-center justify-center py-20 text-gray-400 border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-xl">
+              <Star size={36} className="opacity-20 mb-3" />
+              <p className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">{t.skills.storeNotLoaded}</p>
+              <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">{t.skills.storeNotLoadedHint}</p>
+              <button onClick={loadSkillHub}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 shadow-sm transition-colors">
+                <RefreshCw size={14} /> {t.skills.syncStore}
+              </button>
             </div>
           ) : (
             <div className={storeGridClasses}>

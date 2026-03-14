@@ -262,6 +262,8 @@ export interface Translations {
     clawHubTitle: string;
     clawHubSubtitle: string;
     syncStore: string;
+    storeNotLoaded: string;
+    storeNotLoadedHint: string;
     syncing: string;
     visitSite: string;
     syncSuccess: string;
