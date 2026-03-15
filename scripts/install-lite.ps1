@@ -9,7 +9,6 @@ $GiteeMeta = "$GiteeRawBase/release/update-lite.json"
 $GiteeReleaseBase = "https://gitee.com/$GiteeRepo/releases/download"
 $InstallDir = "C:\ClawPanelLite"
 $ServiceName = "clawpanel-lite"
-$DefaultVersion = "0.1.10"
 
 function Get-LatestVersionFromGitHub {
   $items = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases?per_page=20" -UseBasicParsing
@@ -37,7 +36,10 @@ if (-not $DownloadSource) {
   if ($sourceChoice -eq '1') { $DownloadSource = 'github' } else { $DownloadSource = 'gitee' }
 }
 $Version = if ($env:VERSION) { $env:VERSION } else { if ($DownloadSource -eq "github") { Get-LatestVersionFromGitHub } else { Get-LatestVersionFromGitee } }
-if (-not $Version) { $Version = $DefaultVersion }
+if (-not $Version) {
+  Write-Error "无法获取最新版本号。请检查网络连接，或通过 `$env:VERSION='x.y.z' 手动指定版本后重试。"
+  exit 1
+}
 $PackageName = "clawpanel-lite-core-v${Version}-windows-amd64.tar.gz"
 
 $PrimaryUrl = if ($DownloadSource -eq "github") { "https://github.com/$Repo/releases/download/${TagPrefix}${Version}/$PackageName" } else { "$GiteeReleaseBase/${TagPrefix}${Version}/$PackageName" }

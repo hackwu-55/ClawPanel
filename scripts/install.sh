@@ -3,9 +3,9 @@
 # ClawPanel 一键安装脚本 (Linux/macOS)
 # 自动获取最新 Release 版本，无需手动更新脚本
 # 用法:
-#   curl -fsSL https://gitee.com/zxy000006/ClawPanel/raw/main/scripts/install.sh -o install.sh && sudo bash install.sh
+#   curl -fsSL http://47.76.58.84:16198/clawpanel/scripts/install.sh | sudo bash
 # 或:
-#   wget -O install.sh https://gitee.com/zxy000006/ClawPanel/raw/main/scripts/install.sh && sudo bash install.sh
+#   wget -qO- http://47.76.58.84:16198/clawpanel/scripts/install.sh | sudo bash
 # ============================================================
 
 set -e
@@ -14,11 +14,9 @@ INSTALL_DIR="/opt/clawpanel"
 SERVICE_NAME="clawpanel"
 BINARY_NAME="clawpanel"
 REPO="zhaoxinyi02/ClawPanel"
-GITEE_REPO="zxy000006/ClawPanel"
 TAG_PREFIX="pro-v"
 GITHUB_RELEASES_API="https://api.github.com/repos/${REPO}/releases?per_page=20"
 PORT="19527"
-GITEE_RAW_BASE="https://gitee.com/${GITEE_REPO}/raw/main"
 ACCEL_BASE="http://47.76.58.84:16198/clawpanel"
 DEFAULT_VERSION="5.2.10"
 UPDATE_META="${UPDATE_META:-update-pro.json}"

@@ -331,6 +331,14 @@ func SaveChannel(cfg *config.Config, procMgr *process.Manager) gin.HandlerFunc {
 		if id == "wecom" {
 			body = normalizeWeComChannelConfig(body)
 		}
+		// 保留现有的 enabled 状态：如果前端未传 enabled 字段，沿用原有值
+		if _, hasEnabled := body["enabled"]; !hasEnabled {
+			if existing, ok := channels[id].(map[string]interface{}); ok {
+				if v, ok := existing["enabled"]; ok {
+					body["enabled"] = v
+				}
+			}
+		}
 		channels[id] = body
 		ocConfig["channels"] = channels
 
@@ -354,9 +362,13 @@ func SaveChannel(cfg *config.Config, procMgr *process.Manager) gin.HandlerFunc {
 				resp["message"] = "QQ 配置已保存；OpenClaw 网关下次启动时生效"
 			}
 		} else if procMgr != nil && procMgr.GetStatus().Running {
-			writeRestartSignal(cfg, id+" channel config updated")
-			resp["message"] = "通道配置已保存，并已发送网关重启请求使配置生效"
-			resp["restartRequested"] = true
+			if err := procMgr.Restart(); err != nil {
+				resp["message"] = "通道配置已保存，但自动重启网关失败，请手动重启 OpenClaw 网关后生效"
+				resp["restartWarning"] = err.Error()
+			} else {
+				resp["message"] = "通道配置已保存，并已自动重启网关使配置生效"
+				resp["restarted"] = true
+			}
 		} else {
 			resp["message"] = "通道配置已保存；OpenClaw 网关下次启动时生效"
 		}
@@ -1074,8 +1086,10 @@ func ToggleChannel(cfg *config.Config, procMgr *process.Manager, napcatMon *moni
 			}
 		}
 
-		// 发送网关重启信号
-		writeRestartSignal(cfg, req.ChannelID+" toggled")
+		// 重启网关使配置生效
+		if procMgr != nil && procMgr.GetStatus().Running {
+			_ = procMgr.Restart()
+		}
 
 		channelNames := map[string]string{
 			"qq": "QQ (NapCat)", "wechat": "微信", "feishu": "飞书",
@@ -1298,15 +1312,6 @@ func isNativeOpenAI(baseURL string) bool {
 	return strings.Contains(strings.ToLower(baseURL), "api.openai.com")
 }
 
-// writeRestartSignal 写入网关重启信号文件
-func writeRestartSignal(cfg *config.Config, reason string) {
-	signalPath := filepath.Join(cfg.OpenClawDir, "restart-gateway-signal.json")
-	data, _ := json.Marshal(map[string]interface{}{
-		"requestedAt": "now",
-		"reason":      reason,
-	})
-	os.WriteFile(signalPath, data, 0644)
-}
 
 // resolveActiveFeishuEntryID 返回当前启用的飞书插件 entry ID
 func resolveActiveFeishuEntryID(entries map[string]interface{}) string {
@@ -1363,11 +1368,19 @@ func SwitchFeishuVariant(cfg *config.Config, procMgr *process.Manager, sysLog ..
 		}
 
 		// 互斥设置 enabled
+		// Lite 版只有内置插件目录 "feishu"，不存在 "feishu-openclaw-plugin"；
+		// Pro 版支持多种官方插件 ID（openclaw-lark、feishu-openclaw-plugin）
 		var enableID string
 		var disableIDs []string
 		label := "ClawTeam 社区版"
-		if req.Variant == "official" {
-			// 启用当前已安装的官方版 ID（优先新 ID）
+		if cfg.IsLiteEdition() {
+			// Lite 版两种变体都映射到同一个内置插件 "feishu"
+			enableID = "feishu"
+			if req.Variant == "official" {
+				label = "飞书官方版"
+			}
+		} else if req.Variant == "official" {
+			// Pro 版：启用当前已安装的官方版 ID（优先新 ID openclaw-lark）
 			enableID = resolveOfficialFeishuID(entries)
 			disableIDs = []string{"feishu"}
 			label = "飞书官方版"
@@ -1391,6 +1404,11 @@ func SwitchFeishuVariant(cfg *config.Config, procMgr *process.Manager, sysLog ..
 			}
 		}
 
+		// 清理可能存在的 feishu-openclaw-plugin 脏 entry（Lite 版无此插件）
+		if cfg.IsLiteEdition() {
+			delete(entries, "feishu-openclaw-plugin")
+		}
+
 		plugins["entries"] = entries
 		ocConfig["plugins"] = plugins
 
@@ -1399,12 +1417,19 @@ func SwitchFeishuVariant(cfg *config.Config, procMgr *process.Manager, sysLog ..
 			return
 		}
 
-		writeRestartSignal(cfg, "feishu variant switched to "+req.Variant)
-
 		if len(sysLog) > 0 && sysLog[0] != nil {
 			sysLog[0].Log("system", "channel.variant_switched", "飞书通道切换为"+label)
 		}
 
-		c.JSON(http.StatusOK, gin.H{"ok": true, "message": "飞书通道已切换为" + label})
+		resp := gin.H{"ok": true, "message": "飞书通道已切换为" + label}
+		if procMgr != nil && procMgr.GetStatus().Running {
+			if err := procMgr.Restart(); err != nil {
+				resp["message"] = "飞书通道已切换为" + label + "，但自动重启网关失败，请手动重启 OpenClaw 网关后生效"
+				resp["restartWarning"] = err.Error()
+			} else {
+				resp["restarted"] = true
+			}
+		}
+		c.JSON(http.StatusOK, resp)
 	}
 }

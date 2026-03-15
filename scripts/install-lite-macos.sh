@@ -4,13 +4,10 @@ set -euo pipefail
 INSTALL_DIR="/opt/clawpanel-lite"
 SERVICE_LABEL="com.clawpanel.lite.service"
 REPO="zhaoxinyi02/ClawPanel"
-GITEE_REPO="zxy000006/ClawPanel"
 TAG_PREFIX="lite-v"
-GITEE_RAW_BASE="https://gitee.com/${GITEE_REPO}/raw/main"
 ACCEL_BASE="http://47.76.58.84:16198/clawpanel"
 ACCEL_META_URL="${ACCEL_BASE}/update-lite.json"
 GITHUB_RELEASES_API="https://api.github.com/repos/${REPO}/releases?per_page=20"
-DEFAULT_VERSION="0.1.10"
 
 RED='\033[31m'
 GREEN='\033[32m'
@@ -112,7 +109,9 @@ else
   VERSION=${VERSION:-$( [[ "$DOWNLOAD_SOURCE" == github ]] && get_latest_version_from_github || get_latest_version_from_accel )}
   VERSION=${VERSION:-$( [[ "$DOWNLOAD_SOURCE" == github ]] && get_latest_version_from_accel || get_latest_version_from_github )}
 fi
-VERSION=${VERSION:-$DEFAULT_VERSION}
+if [[ -z "${VERSION:-}" ]]; then
+  err "无法获取最新版本号。请检查网络连接，或通过 VERSION=x.y.z 环境变量手动指定版本后重试。"
+fi
 PACKAGE_NAME="clawpanel-lite-core-v${VERSION}-darwin-${ARCH}.tar.gz"
 
 print_banner

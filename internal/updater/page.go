@@ -191,6 +191,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 const TOKEN = '%s';
 const PANEL_PORT = %d;
 const UPDATER_BASE = window.location.origin;
+const UPDATER_PATH_BASE = '/api/panel/updater';
 const EDITION = '%s';
 const PANEL_URL = window.location.protocol + '//' + window.location.hostname + ':' + PANEL_PORT;
 let pollTimer = null;
@@ -242,7 +243,7 @@ async function api(path, opts) {
     params.set('source', getSelectedSource());
   }
   const sep = path.includes('?') ? '&' : '?';
-  const url = UPDATER_BASE + '/updater/api/' + path + sep + params.toString();
+  const url = UPDATER_BASE + UPDATER_PATH_BASE + '/api/' + path + sep + params.toString();
   const resp = await fetch(url, opts);
   return resp.json();
 }
@@ -379,7 +380,7 @@ async function handleUpload(e) {
   const fd = new FormData();
   fd.append('file', file);
   try {
-    const url = UPDATER_BASE + '/updater/api/upload-update?token=' + TOKEN;
+    const url = UPDATER_BASE + UPDATER_PATH_BASE + '/api/upload-update?token=' + TOKEN;
     const resp = await fetch(url, {method:'POST', body:fd});
     const r = await resp.json();
     if (!r.ok) { alert('上传失败: ' + (r.error||'')); return; }

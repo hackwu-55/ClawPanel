@@ -200,6 +200,8 @@ func runServer(stopCh chan struct{}) {
 		// 公开路由
 		api.POST("/auth/login", handler.Login(db, cfg))
 		api.POST("/workflows/intercept", workflowRuntime.InterceptInbound())
+		api.Any("/panel/updater", handler.ProxyUpdater(cfg))
+		api.Any("/panel/updater/*path", handler.ProxyUpdater(cfg))
 
 		// 需要认证的路由
 		auth := api.Group("")
@@ -311,8 +313,6 @@ func runServer(stopCh chan struct{}) {
 
 			// 独立更新工具
 			auth.POST("/panel/update-token", handler.GenerateUpdateToken(cfg, cfg.Port))
-			auth.Any("/panel/updater", handler.ProxyUpdater(cfg))
-			auth.Any("/panel/updater/*path", handler.ProxyUpdater(cfg))
 			auth.GET("/panel/update-history", handler.GetUpdateHistory(cfg))
 
 			// 事件日志
