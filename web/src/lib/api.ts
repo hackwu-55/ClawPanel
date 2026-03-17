@@ -158,6 +158,7 @@ const _api = {
     return get('/system/clawhub/search' + (suffix ? `?${suffix}` : ''));
   },
   installClawHubSkill: (skillId: string, agentId?: string, installTarget?: 'agent' | 'global') => post('/system/clawhub/install', { skillId, agentId, installTarget }),
+  copySkill: (skillId: string, sourceAgentId?: string, targetAgentId?: string, installTarget?: 'agent' | 'global') => post(`/system/skills/${encodeURIComponent(skillId)}/copy`, { sourceAgentId, targetAgentId, installTarget }),
   uninstallSkill: (skillId: string, agentId?: string, installTarget?: 'agent' | 'global') => post('/system/clawhub/uninstall', { skillId, agentId, installTarget }),
   checkSkillDeps: (env?: string[], bins?: string[], anyBins?: string[]) => post('/system/clawhub/check-deps', { env, bins, anyBins }),
   getSkillHubCatalog: (agentId?: string, installTarget?: 'agent' | 'global') => {

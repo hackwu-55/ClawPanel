@@ -1153,3 +1153,71 @@ func TestSaveChannelRequestsGatewayRestartForTelegramWhenRunning(t *testing.T) {
 		t.Fatalf("expected telegram allowFrom wildcard, got %#v", channels["telegram"])
 	}
 }
+
+// --- Feishu plugin ID resolution tests ---
+
+func TestResolveActiveFeishuEntryID(t *testing.T) {
+	tests := []struct {
+		name    string
+		entries map[string]interface{}
+		want    string
+	}{
+		{"empty entries", map[string]interface{}{}, "feishu"},
+		{"community enabled", map[string]interface{}{
+			"feishu": map[string]interface{}{"enabled": true},
+		}, "feishu"},
+		{"old official enabled", map[string]interface{}{
+			"feishu-openclaw-plugin": map[string]interface{}{"enabled": true},
+		}, "feishu-openclaw-plugin"},
+		{"new official enabled", map[string]interface{}{
+			"openclaw-lark": map[string]interface{}{"enabled": true},
+		}, "openclaw-lark"},
+		{"new official takes precedence over old", map[string]interface{}{
+			"openclaw-lark":          map[string]interface{}{"enabled": true},
+			"feishu-openclaw-plugin": map[string]interface{}{"enabled": true},
+		}, "openclaw-lark"},
+		{"disabled entries fallback to first present", map[string]interface{}{
+			"feishu-openclaw-plugin": map[string]interface{}{"enabled": false},
+		}, "feishu-openclaw-plugin"},
+		{"disabled new official present", map[string]interface{}{
+			"openclaw-lark": map[string]interface{}{"enabled": false},
+			"feishu":        map[string]interface{}{"enabled": false},
+		}, "openclaw-lark"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveActiveFeishuEntryID(tt.entries)
+			if got != tt.want {
+				t.Errorf("resolveActiveFeishuEntryID() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveOfficialFeishuID(t *testing.T) {
+	tests := []struct {
+		name    string
+		entries map[string]interface{}
+		want    string
+	}{
+		{"empty entries returns first official ID", map[string]interface{}{}, "openclaw-lark"},
+		{"old official present", map[string]interface{}{
+			"feishu-openclaw-plugin": map[string]interface{}{},
+		}, "feishu-openclaw-plugin"},
+		{"new official present", map[string]interface{}{
+			"openclaw-lark": map[string]interface{}{},
+		}, "openclaw-lark"},
+		{"both present, new takes precedence", map[string]interface{}{
+			"openclaw-lark":          map[string]interface{}{},
+			"feishu-openclaw-plugin": map[string]interface{}{},
+		}, "openclaw-lark"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveOfficialFeishuID(tt.entries)
+			if got != tt.want {
+				t.Errorf("resolveOfficialFeishuID() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

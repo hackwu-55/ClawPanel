@@ -26,8 +26,12 @@ function DashboardPage({ logEntries, refreshLog }: DashboardProps) {
 
   useEffect(() => {
     api.getStatus().then(r => { if (r.ok) setStatus(r); });
-    const t = setInterval(() => { api.getStatus().then(r => { if (r.ok) setStatus(r); }); }, 10000);
-    return () => clearInterval(t);
+    const poll = () => { if (!document.hidden) api.getStatus().then(r => { if (r.ok) setStatus(r); }); };
+    const t = setInterval(poll, 10000);
+    // Resume immediately when tab becomes visible again
+    const onVisible = () => { if (!document.hidden) poll(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVisible); };
   }, []);
 
   useEffect(() => {

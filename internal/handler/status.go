@@ -62,9 +62,10 @@ func GetStatus(db *sql.DB, cfg *config.Config, procMgr *process.Manager, napcatM
 			// 扫描 plugins.entries
 			if plugins, ok := ocConfig["plugins"].(map[string]interface{}); ok {
 				if entries, ok := plugins["entries"].(map[string]interface{}); ok {
-					// 飞书别名映射：feishu-openclaw-plugin 映射为 feishu，避免重复
+					// 飞书别名映射：官方版插件 ID 映射为 feishu，避免重复
 					channelAliases := map[string]string{
 						"feishu-openclaw-plugin": "feishu",
+						"openclaw-lark":          "feishu",
 					}
 					for id, conf := range entries {
 						canonicalID := id

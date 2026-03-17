@@ -404,13 +404,17 @@ export default function Workflows() {
   }, [selectedRunId]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
+    const tick = () => {
+      if (document.hidden) return;
       void loadRuns();
       if (selectedRunId) {
         void loadRunDetail(selectedRunId);
       }
-    }, 3000);
-    return () => window.clearInterval(timer);
+    };
+    const timer = window.setInterval(tick, 3000);
+    const onVisible = () => { if (!document.hidden) tick(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', onVisible); };
   }, [selectedRunId, runFilter]);
 
   const pushMessage = (text: string) => {

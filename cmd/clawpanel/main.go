@@ -259,6 +259,7 @@ func runServer(stopCh chan struct{}) {
 			// 技能 & 插件
 			auth.GET("/system/skills", handler.GetSkills(cfg))
 			auth.PUT("/system/skills/:id/toggle", handler.ToggleSkill(cfg))
+			auth.POST("/system/skills/:id/copy", handler.CopySkill(cfg))
 			auth.GET("/system/skills/:id/config", handler.GetSkillConfig(cfg))
 			auth.PUT("/system/skills/:id/config", handler.UpdateSkillConfig(cfg))
 			auth.GET("/system/clawhub/search", handler.SearchClawHub(cfg))

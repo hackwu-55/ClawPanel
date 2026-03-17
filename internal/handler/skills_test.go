@@ -360,6 +360,73 @@ func TestSkillConfigHandlersSupportSkillJSONDeclaredKeys(t *testing.T) {
 	}
 }
 
+func TestCopySkillCopiesInstalledSkillToAnotherAgent(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	root := resolvedTempDir(t)
+	openClawDir := filepath.Join(root, "openclaw")
+	mainWorkspace := filepath.Join(root, "workspace", "main")
+	otherWorkspace := filepath.Join(root, "workspace", "secondary")
+	cfg := &config.Config{OpenClawDir: openClawDir, OpenClawWork: mainWorkspace}
+	writeJSON(t, filepath.Join(openClawDir, "openclaw.json"), map[string]interface{}{
+		"agents": map[string]interface{}{
+			"default": "main",
+			"list": []interface{}{
+				map[string]interface{}{"id": "main", "workspace": mainWorkspace},
+				map[string]interface{}{"id": "secondary", "workspace": otherWorkspace},
+			},
+		},
+	})
+
+	skillDir := filepath.Join(mainWorkspace, "skills", "copy-me")
+	writeSkillFixture(t, skillDir, "Copy Me", "copyable skill", "")
+	if err := os.WriteFile(filepath.Join(skillDir, "extra.txt"), []byte("hello copy\n"), 0644); err != nil {
+		t.Fatalf("write extra file: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(skillDir, "nested"), 0755); err != nil {
+		t.Fatalf("mkdir nested: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "nested", "notes.md"), []byte("nested\n"), 0644); err != nil {
+		t.Fatalf("write nested file: %v", err)
+	}
+
+	r := gin.New()
+	r.POST("/system/skills/:id/copy", CopySkill(cfg))
+	r.GET("/system/skills", GetSkills(cfg))
+
+	body := bytes.NewReader([]byte(`{"sourceAgentId":"main","targetAgentId":"secondary","installTarget":"agent"}`))
+	req := httptest.NewRequest(http.MethodPost, "/system/skills/copy-me/copy", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 copy response, got %d: %s", w.Code, w.Body.String())
+	}
+
+	for _, rel := range []string{"SKILL.md", "extra.txt", filepath.Join("nested", "notes.md")} {
+		if _, err := os.Stat(filepath.Join(otherWorkspace, "skills", "copy-me", rel)); err != nil {
+			t.Fatalf("expected copied file %s, got %v", rel, err)
+		}
+	}
+
+	skillsReq := httptest.NewRequest(http.MethodGet, "/system/skills?agentId=secondary", nil)
+	skillsW := httptest.NewRecorder()
+	r.ServeHTTP(skillsW, skillsReq)
+	if skillsW.Code != http.StatusOK {
+		t.Fatalf("expected 200 skills response, got %d: %s", skillsW.Code, skillsW.Body.String())
+	}
+	var resp struct {
+		Skills []skillInfo `json:"skills"`
+	}
+	if err := json.Unmarshal(skillsW.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode copied skills response: %v", err)
+	}
+	if findSkillByID(resp.Skills, "copy-me") == nil {
+		t.Fatalf("expected copied skill to appear for target agent")
+	}
+}
+
 func TestSearchAndInstallClawHubUseOfficialAPIContract(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

@@ -18,6 +18,12 @@ import (
 	"github.com/zhaoxinyi02/ClawPanel/internal/process"
 )
 
+// 飞书官方版插件 ID 集合（优先级从高到低：新 ID 优先）
+var feishuOfficialPluginIDs = []string{"openclaw-lark", "feishu-openclaw-plugin"}
+
+// 所有飞书插件 ID（官方版 + 社区版）
+var feishuAllPluginIDs = []string{"openclaw-lark", "feishu-openclaw-plugin", "feishu"}
+
 func normalizeProviderAPI(api string) string {
 	switch api {
 	case "anthropic":
@@ -152,17 +158,6 @@ func isWecomAppEnabled(cfg *config.Config) bool {
 	}
 	info, err := os.Stat(activeDir)
 	return err == nil && info.IsDir()
-}
-
-var officialFeishuEntryIDs = []string{"openclaw-lark", "feishu-openclaw-plugin"}
-
-func resolveInstalledOfficialFeishuEntryID(entries map[string]interface{}) string {
-	for _, id := range officialFeishuEntryIDs {
-		if _, ok := entries[id]; ok {
-			return id
-		}
-	}
-	return officialFeishuEntryIDs[0]
 }
 
 func injectWecomVirtualChannel(cfg *config.Config, ocConfig map[string]interface{}) {
@@ -1191,14 +1186,15 @@ func ToggleChannel(cfg *config.Config, procMgr *process.Manager, napcatMon *moni
 				}
 				pe["enabled"] = req.Enabled
 				entries[activeEntryID] = pe
-				// 禁用另一个变体（如果存在）
-				otherID := "feishu"
-				if activeEntryID == "feishu" {
-					otherID = "feishu-openclaw-plugin"
-				}
-				if otherEntry, ok := entries[otherID].(map[string]interface{}); ok {
-					otherEntry["enabled"] = false
-					entries[otherID] = otherEntry
+				// 禁用所有其他飞书变体
+				for _, othID := range feishuAllPluginIDs {
+					if othID == activeEntryID {
+						continue
+					}
+					if otherEntry, ok := entries[othID].(map[string]interface{}); ok {
+						otherEntry["enabled"] = false
+						entries[othID] = otherEntry
+					}
 				}
 			} else {
 				pe, _ := entries[req.ChannelID].(map[string]interface{})
@@ -1478,7 +1474,7 @@ func isNativeOpenAI(baseURL string) bool {
 
 // resolveActiveFeishuEntryID 返回当前启用的飞书插件 entry ID
 func resolveActiveFeishuEntryID(entries map[string]interface{}) string {
-	for _, id := range append(append([]string{}, officialFeishuEntryIDs...), "feishu") {
+	for _, id := range feishuAllPluginIDs {
 		if entry, ok := entries[id].(map[string]interface{}); ok {
 			if enabled, _ := entry["enabled"].(bool); enabled {
 				return id
@@ -1486,12 +1482,23 @@ func resolveActiveFeishuEntryID(entries map[string]interface{}) string {
 		}
 	}
 	// 没有 enabled 的，返回有 entry 的第一个
-	for _, id := range append(append([]string{}, officialFeishuEntryIDs...), "feishu") {
+	for _, id := range feishuAllPluginIDs {
 		if entries[id] != nil {
 			return id
 		}
 	}
 	return "feishu"
+}
+
+// resolveOfficialFeishuID 返回已安装的官方版飞书插件 ID（优先新 ID）
+func resolveOfficialFeishuID(entries map[string]interface{}) string {
+	for _, id := range feishuOfficialPluginIDs {
+		if entries[id] != nil {
+			return id
+		}
+	}
+	// 默认返回新 ID
+	return feishuOfficialPluginIDs[0]
 }
 
 // SwitchFeishuVariant 切换飞书插件版本（官方版 / ClawTeam 版）
@@ -1521,25 +1528,24 @@ func SwitchFeishuVariant(cfg *config.Config, procMgr *process.Manager, sysLog ..
 
 		// 互斥设置 enabled
 		// Lite 版只有内置插件目录 "feishu"，不存在 "feishu-openclaw-plugin"；
-		// Pro 版两种变体均可能存在，用不同的 entry key 区分。
-		var enableID, disableID string
+		// Pro 版支持多种官方插件 ID（openclaw-lark、feishu-openclaw-plugin）
+		var enableID string
+		var disableIDs []string
 		label := "ClawTeam 社区版"
 		if cfg.IsLiteEdition() {
 			// Lite 版两种变体都映射到同一个内置插件 "feishu"
 			enableID = "feishu"
-			disableID = ""
 			if req.Variant == "official" {
 				label = "飞书官方版"
 			}
+		} else if req.Variant == "official" {
+			// Pro 版：启用当前已安装的官方版 ID（优先新 ID openclaw-lark）
+			enableID = resolveOfficialFeishuID(entries)
+			disableIDs = []string{"feishu"}
+			label = "飞书官方版"
 		} else {
-			// Pro 版：clawteam→"feishu"，official→"feishu-openclaw-plugin"
 			enableID = "feishu"
-			disableID = resolveInstalledOfficialFeishuEntryID(entries)
-			if req.Variant == "official" {
-				enableID = resolveInstalledOfficialFeishuEntryID(entries)
-				disableID = "feishu"
-				label = "飞书官方版"
-			}
+			disableIDs = append([]string{}, feishuOfficialPluginIDs...)
 		}
 
 		enableEntry, _ := entries[enableID].(map[string]interface{})
@@ -1549,16 +1555,15 @@ func SwitchFeishuVariant(cfg *config.Config, procMgr *process.Manager, sysLog ..
 		enableEntry["enabled"] = true
 		entries[enableID] = enableEntry
 
-		if disableID != "" {
+		for _, disableID := range disableIDs {
 			disableEntry, _ := entries[disableID].(map[string]interface{})
-			if disableEntry == nil {
-				disableEntry = map[string]interface{}{}
+			if disableEntry != nil {
+				disableEntry["enabled"] = false
+				entries[disableID] = disableEntry
 			}
-			disableEntry["enabled"] = false
-			entries[disableID] = disableEntry
 		}
 		if req.Variant == "official" {
-			for _, aliasID := range officialFeishuEntryIDs {
+			for _, aliasID := range feishuOfficialPluginIDs {
 				if aliasID == enableID {
 					continue
 				}
@@ -1571,7 +1576,7 @@ func SwitchFeishuVariant(cfg *config.Config, procMgr *process.Manager, sysLog ..
 
 		// 清理可能存在的 feishu-openclaw-plugin 脏 entry（Lite 版无此插件）
 		if cfg.IsLiteEdition() {
-			for _, aliasID := range officialFeishuEntryIDs {
+			for _, aliasID := range feishuOfficialPluginIDs {
 				delete(entries, aliasID)
 			}
 		}

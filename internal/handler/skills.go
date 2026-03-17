@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -289,6 +290,96 @@ func UpdateSkillConfig(cfg *config.Config) gin.HandlerFunc {
 			"configKeys": configKeys,
 			"values":     values,
 			"updated":    len(req.Values),
+		})
+	}
+}
+
+// CopySkill copies an installed skill into another agent workspace or the global managed root.
+func CopySkill(cfg *config.Config) gin.HandlerFunc {
+	type reqBody struct {
+		SourceAgentID string `json:"sourceAgentId"`
+		TargetAgentID string `json:"targetAgentId"`
+		InstallTarget string `json:"installTarget,omitempty"`
+	}
+	return func(c *gin.Context) {
+		requested := strings.TrimSpace(c.Param("id"))
+		if requested == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "missing skill id"})
+			return
+		}
+
+		var req reqBody
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+
+		sourceAgentID, err := resolveRequestedAgentID(cfg, req.SourceAgentID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+		targetAgentID := req.TargetAgentID
+		if normalizeSkillInstallTarget(req.InstallTarget) != "global" {
+			targetAgentID, err = resolveRequestedAgentID(cfg, req.TargetAgentID)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
+				return
+			}
+		}
+
+		skill, _, err := resolveSkillConfigTarget(cfg, sourceAgentID, requested)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+		if strings.TrimSpace(skill.Path) == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "skill path not available"})
+			return
+		}
+		if err := ensureExistingPathChainSafe(skill.Path, true); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+
+		installBase, installTarget, err := resolveSkillInstallBase(cfg, targetAgentID, req.InstallTarget)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+		destID := strings.TrimSpace(skill.ID)
+		if destID == "" {
+			destID = strings.TrimSpace(skill.SkillKey)
+		}
+		if destID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "skill id not available"})
+			return
+		}
+		destDir := filepath.Join(installBase, "skills", destID)
+		if err := ensureClawHubInstallTarget(installBase, destDir); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+		if _, err := os.Stat(destDir); err == nil {
+			c.JSON(http.StatusConflict, gin.H{"ok": false, "error": fmt.Sprintf("skill %s is already installed", destID)})
+			return
+		} else if !os.IsNotExist(err) {
+			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+		if err := copySkillDirectory(skill.Path, destDir); err != nil {
+			_ = os.RemoveAll(destDir)
+			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"ok":            true,
+			"skillId":       destID,
+			"skillKey":      skill.SkillKey,
+			"sourceAgentId": sourceAgentID,
+			"targetAgentId": targetAgentID,
+			"installTarget": installTarget,
 		})
 	}
 }
@@ -1472,6 +1563,56 @@ func resolveSkillConfigTarget(cfg *config.Config, agentID, requested string) (sk
 		}
 	}
 	return skillInfo{}, ocConfig, fmt.Errorf("skill %q not found", requested)
+}
+
+func copySkillDirectory(src, dest string) error {
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return fmt.Errorf("create skill parent directory: %w", err)
+	}
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := dest
+		if rel != "." {
+			target = filepath.Join(dest, rel)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing to copy symlinked skill entry %s", path)
+		}
+		if info.IsDir() {
+			return os.MkdirAll(target, info.Mode().Perm())
+		}
+		if err := copySkillFile(path, target, info.Mode().Perm()); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+func copySkillFile(src, dest string, mode os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("open source file: %w", err)
+	}
+	defer in.Close()
+
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return fmt.Errorf("create destination directory: %w", err)
+	}
+	out, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	if err != nil {
+		return fmt.Errorf("create destination file: %w", err)
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, in); err != nil {
+		return fmt.Errorf("copy file: %w", err)
+	}
+	return nil
 }
 
 func configPathSegments(path string) ([]string, error) {
