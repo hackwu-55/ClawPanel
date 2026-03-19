@@ -14,7 +14,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -962,16 +961,10 @@ func writeClawHubOrigin(skillDir, registryBase, slug, version string, installedA
 }
 
 func alignPathOwnershipToParent(targetPath string) error {
-	parentInfo, err := os.Stat(filepath.Dir(targetPath))
-	if err != nil {
-		return nil
+	uid, gid, ok, err := parentOwnership(filepath.Dir(targetPath))
+	if err != nil || !ok {
+		return err
 	}
-	stat, ok := parentInfo.Sys().(*syscall.Stat_t)
-	if !ok {
-		return nil
-	}
-	uid := int(stat.Uid)
-	gid := int(stat.Gid)
 	return filepath.Walk(targetPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
