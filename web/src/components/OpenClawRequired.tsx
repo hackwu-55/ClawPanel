@@ -14,13 +14,16 @@ interface Props {
 export default function OpenClawRequired({ openclawStatus, processStatus, children }: Props) {
   const { pathname } = useLocation();
   const dismissKey = `openclaw-required-dismissed:${pathname}`;
-  const configured = !!openclawStatus?.configured;
+  const [detectedConfigured, setDetectedConfigured] = useState(false);
+  const configured = !!openclawStatus?.configured || detectedConfigured;
   const isLiteEdition = openclawStatus?.edition === 'lite';
   const runtime = resolveOpenClawRuntime(openclawStatus, processStatus);
   const [installing, setInstalling] = useState(false);
   const [dismissed, setDismissed] = useState(() => sessionStorage.getItem(dismissKey) === '1');
   const [installBlocked, setInstallBlocked] = useState(false);
   const [installBlockedMessage, setInstallBlockedMessage] = useState('');
+  const [installFeedback, setInstallFeedback] = useState('');
+  const [installError, setInstallError] = useState('');
   const [nodeUrl, setNodeUrl] = useState('https://nodejs.org');
   const [gitUrl, setGitUrl] = useState('https://git-scm.com/downloads');
 
@@ -39,6 +42,23 @@ export default function OpenClawRequired({ openclawStatus, processStatus, childr
   useEffect(() => {
     setDismissed(sessionStorage.getItem(dismissKey) === '1');
   }, [dismissKey]);
+
+  const pollOpenClawReady = async () => {
+    for (let i = 0; i < 12; i += 1) {
+      await new Promise(resolve => window.setTimeout(resolve, 5000));
+      try {
+        const status = await api.getStatus();
+        if (status?.ok && status?.openclaw?.configured) {
+          setDetectedConfigured(true);
+          setInstallFeedback('OpenClaw 已检测到，页面状态已自动刷新。');
+          setInstallError('');
+          return;
+        }
+      } catch {
+        // ignore transient polling errors
+      }
+    }
+  };
 
   useEffect(() => {
     if (isLiteEdition) {
@@ -96,6 +116,8 @@ export default function OpenClawRequired({ openclawStatus, processStatus, childr
 
   const handleInstall = async () => {
     setInstalling(true);
+    setInstallFeedback('');
+    setInstallError('');
     try {
       if (isLiteEdition) return;
       const status = await ensureOpenClawInstallPrerequisites();
@@ -104,8 +126,16 @@ export default function OpenClawRequired({ openclawStatus, processStatus, childr
         setInstallBlockedMessage(status.message || '请先手动安装 Node.js 与 Git');
         return;
       }
-      await api.installSoftware('openclaw');
-    } catch {}
+      const r = await api.installSoftware('openclaw');
+      if (!r?.ok) {
+        setInstallError(r?.error || 'OpenClaw 安装任务创建失败');
+        return;
+      }
+      setInstallFeedback(r?.message || 'OpenClaw 安装任务已创建，请在右上角消息中心查看实时进度。安装完成后会自动重新检测。');
+      void pollOpenClawReady();
+    } catch {
+      setInstallError('OpenClaw 安装请求失败，请检查网络或稍后重试');
+    }
     finally { setInstalling(false); }
   };
 
@@ -129,6 +159,8 @@ export default function OpenClawRequired({ openclawStatus, processStatus, childr
               当前页面仍可浏览，但部分实时数据和保存功能可能暂时不可用。
             </p>
             {installBlockedMessage && <p className="text-xs text-amber-700 dark:text-amber-300 mt-2">{installBlockedMessage}</p>}
+            {installFeedback && <p className="text-xs text-emerald-700 dark:text-emerald-300 mt-2">{installFeedback}</p>}
+            {installError && <p className="text-xs text-red-700 dark:text-red-300 mt-2">{installError}</p>}
           </div>
           <div className="flex flex-wrap gap-2">
             <button
@@ -181,6 +213,8 @@ export default function OpenClawRequired({ openclawStatus, processStatus, childr
                   : '此功能依赖 OpenClaw AI 引擎。你可以先安装 / 配置，也可以先关闭提示继续调试页面结构。'}
               </p>
             {installBlockedMessage && <p className="text-xs text-amber-600 dark:text-amber-300 mt-3 leading-5">{installBlockedMessage}</p>}
+            {installFeedback && <p className="text-xs text-emerald-600 dark:text-emerald-300 mt-3 leading-5">{installFeedback}</p>}
+            {installError && <p className="text-xs text-red-600 dark:text-red-300 mt-3 leading-5">{installError}</p>}
           </div>
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
             <button onClick={handleInstall} disabled={installing || installBlocked}

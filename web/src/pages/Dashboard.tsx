@@ -140,12 +140,43 @@ function DashboardPage({ logEntries, refreshLog }: DashboardProps) {
   }
 
   const [installingOC, setInstallingOC] = useState(false);
+  const [installOpenClawMsg, setInstallOpenClawMsg] = useState('');
+  const [installOpenClawErr, setInstallOpenClawErr] = useState('');
+
+  const pollOpenClawReady = async () => {
+    for (let i = 0; i < 12; i += 1) {
+      await new Promise(resolve => window.setTimeout(resolve, 5000));
+      try {
+        const r = await api.getStatus();
+        if (r?.ok) {
+          setStatus(r);
+          if (r?.openclaw?.configured) {
+            setInstallOpenClawMsg('OpenClaw 已检测到，面板状态已自动刷新。');
+            setInstallOpenClawErr('');
+            return;
+          }
+        }
+      } catch {
+        // ignore transient polling errors
+      }
+    }
+  };
+
   const handleInstallOpenClaw = async () => {
     setInstallingOC(true);
+    setInstallOpenClawMsg('');
+    setInstallOpenClawErr('');
     try {
       const r = await api.installSoftware('openclaw');
-      if (!r.ok) console.error(r.error);
-    } catch {}
+      if (!r?.ok) {
+        setInstallOpenClawErr(r?.error || 'OpenClaw 安装任务创建失败');
+        return;
+      }
+      setInstallOpenClawMsg(r?.message || 'OpenClaw 安装任务已创建，请在右上角消息中心查看实时进度。安装完成后会自动重新检测。');
+      void pollOpenClawReady();
+    } catch {
+      setInstallOpenClawErr('OpenClaw 安装请求失败，请检查网络或稍后重试');
+    }
     finally { setInstallingOC(false); }
   };
 
@@ -164,6 +195,8 @@ function DashboardPage({ logEntries, refreshLog }: DashboardProps) {
                 ? '当前 Lite 版本应自带 OpenClaw。若这里仍显示未就绪，请检查 Lite runtime 是否完整解压，或重新安装 Lite 包。'
                 : 'ClawPanel 需要 OpenClaw AI 引擎才能正常工作。安装后即可配置模型、管理技能和连接通道。'}
             </p>
+            {installOpenClawMsg && <p className="text-xs text-emerald-600 dark:text-emerald-300 mt-3 max-w-md mx-auto">{installOpenClawMsg}</p>}
+            {installOpenClawErr && <p className="text-xs text-red-600 dark:text-red-300 mt-3 max-w-md mx-auto">{installOpenClawErr}</p>}
           </div>
           {!isLiteEdition && (
             <>
