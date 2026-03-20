@@ -27,6 +27,10 @@ func GetStatus(db *sql.DB, cfg *config.Config, procMgr *process.Manager, napcatM
 	return func(c *gin.Context) {
 		ocConfig, _ := cfg.ReadOpenClawJSON()
 		injectWecomVirtualChannel(cfg, ocConfig)
+		gatewayPort := cfg.DefaultGatewayPort()
+		if p := procMgr.GatewayPortInt(); p > 0 {
+			gatewayPort = p
+		}
 
 		// 提取已启用的通道
 		channelLabels := map[string]string{
@@ -194,7 +198,7 @@ func GetStatus(db *sql.DB, cfg *config.Config, procMgr *process.Manager, napcatM
 				"edition":         cfg.Edition,
 				"managedRuntime":  cfg.IsLiteEdition(),
 				"bundledRuntime":  cfg.IsLiteEdition(),
-				"gatewayPort":     cfg.DefaultGatewayPort(),
+				"gatewayPort":     gatewayPort,
 			},
 			"gateway": gin.H{
 				"running": gatewayRunning,
