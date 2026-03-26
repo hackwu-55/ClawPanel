@@ -13,8 +13,6 @@ type PanelChatSession = {
   chatType: 'direct' | 'group';
   participantAgentIds?: string[];
   controllerAgentId?: string;
-  preferredAgentId?: string;
-  groupAgentSessionIds?: Record<string, string>;
   status?: 'idle' | 'dispatching' | 'running' | 'reviewing' | 'done';
   title: string;
   targetId?: string;
@@ -34,8 +32,7 @@ type PanelChatMessage = {
   sessionId?: string;
   images?: { src: string; mimeType?: string }[];
   agentId?: string;
-  stage?: 'user' | 'plan' | 'dispatch' | 'report' | 'review' | 'final';
-  internal?: boolean;
+  kind?: 'user' | 'discussion' | 'host' | 'summary' | 'system';
 };
 
 type GroupSessionDraft = {
@@ -54,46 +51,8 @@ type AgentOption = {
   isDefault?: boolean;
 };
 
-type GroupTaskBundle = {
-  taskId: string;
-  meta: {
-    status: string;
-    currentStage: string;
-    title: string;
-  };
-  spec?: string;
-  result?: string;
-  error?: string;
-  timeline?: Array<{ time: string; type: string; agentId?: string; targetAgentId?: string; message?: string }>;
-  subtasks?: Record<string, { agentId: string; role: string; status: string; summary?: string }>;
-  artifacts?: Record<string, string>;
-};
-
 function normalizeUserMessageContent(content: string) {
   return content.replace(/^\[[^\]]+\]\s*/, '').trim();
-}
-
-function stageLabel(stage: PanelChatMessage['stage'], locale: string) {
-  if (locale === 'en') {
-    switch (stage) {
-      case 'user': return 'User Request';
-      case 'plan': return 'Main Agent Analysis';
-      case 'dispatch': return 'Task Dispatch';
-      case 'report': return 'Agent Reports';
-      case 'review': return 'Reviewer Validation';
-      case 'final': return 'Main Agent Summary';
-      default: return '';
-    }
-  }
-  switch (stage) {
-    case 'user': return '用户任务';
-    case 'plan': return '主 Agent 分析';
-    case 'dispatch': return '任务分派';
-    case 'report': return 'Agent 回报';
-    case 'review': return '校验复核';
-    case 'final': return '主 Agent 汇总';
-    default: return '';
-  }
 }
 
 function isDiagramLine(line: string) {
@@ -178,24 +137,6 @@ function statusLabel(status: PanelChatSession['status'], locale: string) {
   }
 }
 
-function groupPhaseSteps(locale: string) {
-  return locale === 'en'
-    ? [
-        { id: 'user', label: 'Task' },
-        { id: 'plan', label: 'Dispatch' },
-        { id: 'report', label: 'Execute' },
-        { id: 'review', label: 'Review' },
-        { id: 'final', label: 'Deliver' },
-      ]
-    : [
-        { id: 'user', label: '任务' },
-        { id: 'plan', label: '分派' },
-        { id: 'report', label: '执行' },
-        { id: 'review', label: '校验' },
-        { id: 'final', label: '交付' },
-      ];
-}
-
 export default function PanelChat() {
   const { uiMode } = (useOutletContext() as { uiMode?: 'modern' }) || {};
   const { locale } = useI18n();
@@ -205,12 +146,9 @@ export default function PanelChat() {
   const [selectedId, setSelectedId] = useState('');
   const [messages, setMessages] = useState<PanelChatMessage[]>([]);
   const [groupSessions, setGroupSessions] = useState<PanelChatSession[]>([]);
-  const [groupMessages, setGroupMessages] = useState<Record<string, PanelChatMessage[]>>({});
   const [agents, setAgents] = useState<AgentOption[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState('main');
-  const [selectedGroupAgentId, setSelectedGroupAgentId] = useState('main');
   const [groupDraft, setGroupDraft] = useState<GroupSessionDraft>({ open: false, title: '', agentIds: ['main'] });
-  const [groupTask, setGroupTask] = useState<GroupTaskBundle | null>(null);
   const [showGroupTaskCard, setShowGroupTaskCard] = useState(true);
   const [groupMessageView, setGroupMessageView] = useState<GroupMessageView>('all');
   const [input, setInput] = useState('');
@@ -250,13 +188,12 @@ export default function PanelChat() {
         agentForNewChat: 'Agent for new chat',
         defaultAgentSuffix: 'default',
         openWithAgent: 'New session with this agent',
-        groupReplyAgent: 'Preferred group agent',
         createGroupTitle: 'Create group session',
         groupParticipantHint: 'Select agents that can join this collaboration session.',
         createGroupConfirm: 'Create group chat',
-        taskCard: 'Task card',
-        showTaskCard: 'Show task card',
-        hideTaskCard: 'Hide task card',
+        taskCard: 'Group overview',
+        showTaskCard: 'Show overview',
+        hideTaskCard: 'Hide overview',
         viewAll: 'All',
         viewInternal: 'Internal',
         viewFinal: 'Final',
@@ -298,13 +235,12 @@ export default function PanelChat() {
       agentForNewChat: '新会话使用智能体',
       defaultAgentSuffix: '默认',
       openWithAgent: '以该智能体另开新会话',
-      groupReplyAgent: '优先处理智能体',
       createGroupTitle: '新建群聊会话',
       groupParticipantHint: '选择要参与本次协作的智能体，main 将默认作为主控。',
       createGroupConfirm: '创建群聊',
-      taskCard: '协作任务卡片',
-      showTaskCard: '显示任务卡片',
-      hideTaskCard: '隐藏任务卡片',
+      taskCard: '群聊概览',
+      showTaskCard: '显示概览',
+      hideTaskCard: '隐藏概览',
       viewAll: '全部',
       viewInternal: '内部协作',
       viewFinal: '最终结论',
@@ -336,7 +272,7 @@ export default function PanelChat() {
     if (!selectedAgentId) return sessions.filter(item => item.chatType === 'direct');
     return sessions.filter(item => item.chatType === 'direct' && item.agentId === selectedAgentId);
   }, [selectedAgentId, sessions]);
-  const displayedSessions = directSessions;
+  const displayedSessions = chatMode === 'group' ? groupSessions : directSessions;
   const selectedSession = displayedSessions.find(item => item.id === selectedId) || null;
   const liveMessages = messages;
   const processing = (!!selectedId && processingSessionId === selectedId) || !!selectedSession?.processing;
@@ -370,9 +306,9 @@ export default function PanelChat() {
     if (chatMode !== 'group') return timelineMessages;
     switch (groupMessageView) {
       case 'internal':
-        return timelineMessages.filter(item => item.internal || item.role === 'system');
+        return timelineMessages.filter(item => item.kind === 'discussion' || item.role === 'system');
       case 'final':
-        return timelineMessages.filter(item => item.role === 'user' || (!item.internal && item.stage === 'final'));
+        return timelineMessages.filter(item => item.kind === 'user' || item.kind === 'summary');
       default:
         return timelineMessages;
     }
@@ -383,30 +319,6 @@ export default function PanelChat() {
     const latestUser = [...timelineMessages].reverse().find(item => item.role === 'user');
     return latestUser?.content || '';
   }, [chatMode, timelineMessages]);
-
-  const groupProgress = useMemo(() => {
-    const steps = groupPhaseSteps(locale);
-    if (chatMode !== 'group') return { steps, activeIndex: 0 };
-    if (groupTask?.subtasks) {
-      const subtasks = Object.values(groupTask.subtasks);
-      const hasReturned = subtasks.some(item => item.status === 'returned');
-      const hasReview = subtasks.some(item => item.role === 'reviewer' && item.status === 'done');
-      const allDone = subtasks.length > 0 && subtasks.every(item => item.status === 'done');
-      let current = 'user';
-      if (hasReturned) current = 'review';
-      else if (allDone) current = 'final';
-      else if (hasReview) current = 'review';
-      else if (subtasks.some(item => item.status === 'done')) current = 'report';
-      else if (processing) current = 'plan';
-      const activeIndex = Math.max(0, steps.findIndex(step => step.id === current));
-      return { steps, activeIndex };
-    }
-    const latestStage = [...timelineMessages].reverse().find(item => !!item.stage)?.stage || 'user';
-    let current = latestStage;
-    if (processing && latestStage === 'plan') current = 'report';
-    const activeIndex = Math.max(0, steps.findIndex(step => step.id === current));
-    return { steps, activeIndex };
-  }, [chatMode, groupTask, locale, processing, timelineMessages]);
 
   useEffect(() => {
     selectedIdRef.current = selectedId;
@@ -428,12 +340,6 @@ export default function PanelChat() {
       setSelectedAgentId(selectedSession.agentId);
     }
   }, [chatMode, selectedSession?.agentId]);
-
-  useEffect(() => {
-    if (chatMode !== 'group') return;
-    if (!selectedSession) return;
-    setSelectedGroupAgentId(selectedSession.preferredAgentId || selectedSession.controllerAgentId || selectedSession.participantAgentIds?.[0] || 'main');
-  }, [chatMode, selectedSession]);
 
   useEffect(() => {
     if (chatMode !== 'direct') return;
@@ -472,6 +378,22 @@ export default function PanelChat() {
     });
   }, [text.failedLoad]);
 
+  const loadGroupSessions = useCallback(async (preferredId?: string) => {
+    const res = await api.getGroupChatSessions();
+    if (!res?.ok) {
+      setErrorText(text.failedLoad);
+      return;
+    }
+    const next = Array.isArray(res.sessions) ? res.sessions : [];
+    setErrorText('');
+    setGroupSessions(next);
+    setSelectedId(current => {
+      if (preferredId && next.some((item: PanelChatSession) => item.id === preferredId)) return preferredId;
+      if (current && next.some((item: PanelChatSession) => item.id === current)) return current;
+      return next[0]?.id || '';
+    });
+  }, [text.failedLoad]);
+
   const loadAgents = useCallback(async () => {
     try {
       const res = await api.getAgentsConfig();
@@ -480,13 +402,11 @@ export default function PanelChat() {
       const normalized = list.map((item: any) => ({ id: String(item?.id || '').trim(), name: String(item?.name || '').trim(), isDefault: String(item?.id || '').trim() === defaultAgent || !!item?.default })).filter((item: AgentOption) => item.id);
       setAgents(normalized);
       setSelectedAgentId(current => current || defaultAgent || normalized[0]?.id || 'main');
-      setSelectedGroupAgentId(current => current || defaultAgent || normalized[0]?.id || 'main');
       setGroupDraft(current => ({ ...current, agentIds: current.agentIds.length > 0 ? current.agentIds : [defaultAgent || normalized[0]?.id || 'main'] }));
     } catch {
       const fallback = [{ id: 'main' }, { id: 'planner' }, { id: 'coder' }, { id: 'reviewer' }];
       setAgents(fallback);
       setSelectedAgentId(current => current || fallback[0].id);
-      setSelectedGroupAgentId(current => current || fallback[0].id);
       setGroupDraft(current => ({ ...current, agentIds: current.agentIds.length > 0 ? current.agentIds : [fallback[0].id] }));
     }
   }, []);
@@ -501,7 +421,8 @@ export default function PanelChat() {
     }
     setMessages([]);
     setPendingUserMessage(null);
-    const res = await api.getPanelChatSessionDetail(id);
+    const isGroupSession = id.startsWith('group-') || chatMode === 'group';
+    const res = isGroupSession ? await api.getGroupChatSessionDetail(id) : await api.getPanelChatSessionDetail(id);
     if (detailRequestIdRef.current != requestId) return;
     if (!res?.ok) {
       setErrorText(text.failedDetail);
@@ -510,47 +431,21 @@ export default function PanelChat() {
     setErrorText('');
     setMessages(Array.isArray(res.messages) ? res.messages : []);
     setPendingUserMessage(null);
-  }, [text.failedDetail]);
-
-  const loadLatestTask = useCallback(async (id: string) => {
-    if (!id) {
-      setGroupTask(null);
-      return;
-    }
-    const res = await api.getPanelChatLatestTask(id);
-    if (!res?.ok) return;
-    setGroupTask(res.task || null);
-  }, []);
+  }, [chatMode, text.failedDetail]);
 
   useEffect(() => {
     (async () => {
       try {
-        await Promise.all([loadSessions(), loadAgents()]);
+        await Promise.all([loadSessions(), loadGroupSessions(), loadAgents()]);
       } finally {
         setBooting(false);
       }
     })();
-  }, [loadAgents, loadSessions]);
+  }, [loadAgents, loadGroupSessions, loadSessions]);
 
   useEffect(() => {
     loadDetail(selectedId);
   }, [loadDetail, selectedId]);
-
-  useEffect(() => {
-    if (chatMode !== 'group') {
-      setGroupTask(null);
-      return;
-    }
-    void loadLatestTask(selectedId);
-  }, [chatMode, loadLatestTask, selectedId]);
-
-  useEffect(() => {
-    if (chatMode !== 'group' || !processing || !selectedId) return;
-    const timer = window.setInterval(() => {
-      void loadLatestTask(selectedId);
-    }, 2500);
-    return () => window.clearInterval(timer);
-  }, [chatMode, loadLatestTask, processing, selectedId]);
 
   useEffect(() => {
     setMessages([]);
@@ -586,7 +481,7 @@ export default function PanelChat() {
         setErrorText(text.failedCreate);
         return '';
       }
-      await loadSessions(res.session.id);
+        await loadSessions(res.session.id);
       setSelectedId(res.session.id);
       setMessages([]);
       return res.session.id as string;
@@ -602,32 +497,27 @@ export default function PanelChat() {
       return '';
     }
     const controllerAgentId = participantAgentIds.includes('main') ? 'main' : participantAgentIds[0];
-    const preferredAgentId = participantAgentIds.includes(selectedGroupAgentId) ? selectedGroupAgentId : controllerAgentId;
     setCreating(true);
     setErrorText('');
     try {
-      const res = await api.createPanelChatSession({
+      const res = await api.createGroupChatSession({
         title: groupDraft.title,
-        chatType: 'group',
-        agentId: controllerAgentId,
         participantAgentIds,
-        controllerAgentId,
-        preferredAgentId,
-      } as any);
+        hostAgentId: controllerAgentId,
+      });
       if (!res?.ok || !res.session?.id) {
         setErrorText(text.failedCreate);
         return '';
       }
-      await loadSessions(res.session.id);
+      await loadGroupSessions(res.session.id);
       setSelectedId(res.session.id);
       setMessages([]);
-      setSelectedGroupAgentId(preferredAgentId);
       setGroupDraft({ open: false, title: '', agentIds: participantAgentIds });
       return res.session.id as string;
     } finally {
       setCreating(false);
     }
-  }, [groupDraft, loadSessions, selectedGroupAgentId, text.failedCreate]);
+  }, [groupDraft, loadGroupSessions, text.failedCreate]);
 
   const appendAbortMarker = useCallback((sessionId: string) => {
     if (abortMarkerHandledRef.current[sessionId]) return;
@@ -673,7 +563,6 @@ export default function PanelChat() {
         sessionId = chatMode === 'group' ? await createGroupSession() : await createSession();
       }
       if (!sessionId) return;
-      const effectivePreferredAgentId = chatMode === 'group' ? selectedGroupAgentId : '';
       setPendingUserMessage({
         id: `pending-user-${Date.now()}`,
         role: 'user',
@@ -685,13 +574,13 @@ export default function PanelChat() {
       const controller = new AbortController();
       abortControllerRef.current = controller;
       const token = localStorage.getItem('admin-token') || '';
-      const response = await fetch(`/api/panel-chat/sessions/${sessionId}/messages`, {
+      const response = await fetch(chatMode === 'group' ? `/api/group-chat/sessions/${sessionId}/messages` : `/api/panel-chat/sessions/${sessionId}/messages`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify(chatMode === 'group' ? { message, preferredAgentId: effectivePreferredAgentId } : { message }),
+        body: JSON.stringify(chatMode === 'group' ? { message } : { message }),
         signal: controller.signal,
       });
       const res = await response.json();
@@ -699,9 +588,6 @@ export default function PanelChat() {
       if (activeRequestIdRef.current !== requestId) return;
       if (res?.ok) {
         abortMarkerHandledRef.current[sessionId] = false;
-        if (chatMode === 'group' && effectivePreferredAgentId) {
-          setSelectedGroupAgentId(effectivePreferredAgentId);
-        }
         if (selectedIdRef.current === sessionId) {
           const nextMessages = Array.isArray(res.messages) ? [...res.messages] : [];
           if (chatMode === 'group' && nextMessages.length > 0) {
@@ -715,7 +601,7 @@ export default function PanelChat() {
           setMessages(nextMessages);
           setPendingUserMessage(null);
         }
-        await loadSessions(sessionId);
+        if (chatMode === 'group') await loadGroupSessions(sessionId); else await loadSessions(sessionId);
       } else if (res?.canceled) {
         appendAbortMarker(sessionId);
         await loadSessions(sessionId);
@@ -746,14 +632,14 @@ export default function PanelChat() {
       }
       setLoading(false);
     }
-  }, [agents, appendAbortMarker, chatMode, createGroupSession, createSession, input, loadSessions, loading, selectedGroupAgentId, selectedId, text.failedSend]);
+  }, [appendAbortMarker, chatMode, createGroupSession, createSession, input, loadGroupSessions, loadSessions, loading, selectedId, text.failedSend]);
 
   const handleDelete = useCallback(async () => {
     if (!selectedSession || interactionLocked || !window.confirm(text.deleteConfirm)) return;
     const deletingId = selectedSession.id;
     const pool = chatMode === 'group' ? groupSessions : directSessions;
     const fallback = pool.find(item => item.id !== deletingId)?.id || '';
-    const res = await api.deletePanelChatSession(deletingId);
+    const res = chatMode === 'group' ? await api.deleteGroupChatSession(deletingId) : await api.deletePanelChatSession(deletingId);
     if (!res?.ok) {
       setErrorText(text.failedDelete);
       return;
@@ -761,8 +647,8 @@ export default function PanelChat() {
     setErrorText('');
     setSelectedId(fallback);
     if (!fallback) setMessages([]);
-    await loadSessions(fallback);
-  }, [chatMode, directSessions, groupSessions, interactionLocked, loadSessions, selectedSession, text.deleteConfirm, text.failedDelete]);
+    if (chatMode === 'group') await loadGroupSessions(fallback); else await loadSessions(fallback);
+  }, [chatMode, directSessions, groupSessions, interactionLocked, loadGroupSessions, loadSessions, selectedSession, text.deleteConfirm, text.failedDelete]);
 
   const handleRename = useCallback(async () => {
     if (!selectedSession) return;
@@ -772,15 +658,15 @@ export default function PanelChat() {
       setDraftTitle(selectedSession.title);
       return;
     }
-    const res = await api.renamePanelChatSession(selectedSession.id, title);
+    const res = chatMode === 'group' ? await api.renameGroupChatSession(selectedSession.id, title) : await api.renamePanelChatSession(selectedSession.id, title);
     if (!res?.ok) {
       setErrorText(text.failedRename);
       return;
     }
     setErrorText('');
     setRenaming(false);
-    await loadSessions(selectedSession.id);
-  }, [chatMode, draftTitle, loadSessions, selectedSession, text.failedRename]);
+    if (chatMode === 'group') await loadGroupSessions(selectedSession.id); else await loadSessions(selectedSession.id);
+  }, [chatMode, draftTitle, loadGroupSessions, loadSessions, selectedSession, text.failedRename]);
 
   const handleCopyCode = useCallback(async (content: string) => {
     try {
@@ -852,9 +738,10 @@ export default function PanelChat() {
           <div className="shrink-0 border-b border-slate-200/70 bg-white/80 px-4 py-4 dark:border-slate-700/70 dark:bg-slate-950/40">
             <div className="flex items-center justify-between gap-3">
               <div className="flex gap-2 text-xs">
-                <span className="inline-flex items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200">{text.direct}</span>
+                <button type="button" onClick={() => { setChatMode('direct'); setSelectedId(directSessions[0]?.id || ''); }} className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs transition ${chatMode === 'direct' ? 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200' : 'border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900'}`}>{text.direct}</button>
+                <button type="button" onClick={() => { setChatMode('group'); setSelectedId(groupSessions[0]?.id || ''); }} className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs transition ${chatMode === 'group' ? 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200' : 'border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900'}`}>{text.group}</button>
               </div>
-              <button onClick={() => void createSession()} disabled={interactionLocked} className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-2 text-xs font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100">
+              <button onClick={chatMode === 'group' ? () => setGroupDraft(current => ({ ...current, open: true, agentIds: current.agentIds.length > 0 ? current.agentIds : ['main'] })) : () => void createSession()} disabled={interactionLocked} className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-2 text-xs font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100">
                 {creating ? <Loader2 size={14} className="animate-spin" /> : <MessageSquarePlus size={14} />}
                 {text.newChat}
               </button>
@@ -996,44 +883,11 @@ export default function PanelChat() {
                     <span className={`rounded-full px-2.5 py-1 font-semibold ${agentBadgeTone(selectedSession.controllerAgentId || selectedSession.agentId)}`}>{agentDisplayName(agents.find(item => item.id === (selectedSession.controllerAgentId || selectedSession.agentId))) || selectedSession.controllerAgentId || selectedSession.agentId}</span>
                   </div>
                 </div>
-                <div className="mt-4 grid gap-3 sm:grid-cols-5">
-                  {groupProgress.steps.map((step, index) => {
-                    const active = index === groupProgress.activeIndex;
-                    const done = index < groupProgress.activeIndex || (!processing && index === groupProgress.activeIndex && groupProgress.activeIndex > 0);
-                    return (
-                      <div key={step.id} className={`rounded-2xl border px-3 py-3 text-center transition ${active ? 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200' : done ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200' : 'border-slate-200 bg-slate-50 text-slate-400 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-500'}`}>
-                        <div className="mx-auto mb-2 flex h-7 w-7 items-center justify-center rounded-full border border-current text-[11px] font-semibold">{index + 1}</div>
-                        <div className="text-xs font-medium">{step.label}</div>
-                      </div>
-                    );
-                  })}
-                </div>
                 <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
                   {[['all', text.viewAll], ['internal', text.viewInternal], ['final', text.viewFinal]].map(([value, label]) => (
                     <button key={value} type="button" onClick={() => setGroupMessageView(value as GroupMessageView)} className={`rounded-xl border px-3 py-1.5 transition ${groupMessageView === value ? 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200' : 'border-slate-200 bg-white text-slate-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-400'}`}>{label}</button>
                   ))}
                 </div>
-                {groupTask && (
-                  <div className="mt-4 max-h-[56vh] overflow-y-auto pr-1">
-                  <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50/80 p-3 dark:border-slate-700 dark:bg-slate-900/60">
-                      <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">子任务状态</div>
-                      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                        {Object.values(groupTask.subtasks || {}).map(subtask => {
-                          const agentMeta = agents.find(item => item.id === subtask.agentId);
-                          return (
-                            <div key={subtask.agentId} className="rounded-xl border border-slate-200 bg-white px-3 py-3 text-xs dark:border-slate-700 dark:bg-slate-950/80">
-                              <div className="flex items-center justify-between gap-2">
-                                <span className={`rounded-full px-2 py-1 font-semibold ${agentBadgeTone(subtask.agentId)}`}>{agentDisplayName(agentMeta) || subtask.agentId}</span>
-                                <span className="rounded-full border border-slate-200 px-2 py-1 text-[10px] text-slate-500 dark:border-slate-700 dark:text-slate-400">{subtask.status}</span>
-                              </div>
-                              {subtask.summary && <p className="mt-2 leading-5 text-slate-500 dark:text-slate-400">{subtask.summary}</p>}
-                            </div>
-                          );
-                        })}
-                      </div>
-                  </div>
-                  </div>
-                )}
               </div>
                 )}
               </div>
@@ -1051,20 +905,12 @@ export default function PanelChat() {
             ) : (
               <div className="flex min-h-full flex-col justify-end">
                 <div className="space-y-4">
-                {filteredTimelineMessages.map((message, index) => {
+                {filteredTimelineMessages.map((message) => {
                   const isUser = message.role === 'user';
                   const isSystem = message.role === 'system';
-                  const isInternal = !!message.internal;
-                  const showStageDivider = chatMode === 'group' && !!message.stage && (index === 0 || filteredTimelineMessages[index - 1]?.stage !== message.stage);
+                  const isInternal = message.kind === 'discussion';
                   return (
                     <Fragment key={message.id}>
-                    {showStageDivider && (
-                      <div key={`${message.id}-stage`} className="my-2 flex items-center gap-3 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">
-                        <div className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
-                        <span>{stageLabel(message.stage, locale)}</span>
-                        <div className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
-                      </div>
-                    )}
                     <div className={`flex gap-3 ${isSystem ? 'justify-center' : isUser ? 'justify-end' : 'justify-start'}`}>
                       {isSystem ? (
                         <div className="my-2 flex w-full items-center gap-3 text-xs text-slate-400 dark:text-slate-500">
@@ -1186,17 +1032,6 @@ export default function PanelChat() {
               <div className="flex items-center justify-between px-2 pb-1 pt-2">
                 <div className="flex items-center gap-3 text-xs text-slate-400">
                   <span>{text.enterHint}</span>
-                  {chatMode === 'group' && selectedSession?.participantAgentIds && selectedSession.participantAgentIds.length > 0 && (
-                    <label className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
-                      <span>{text.groupReplyAgent}</span>
-                      <select value={selectedGroupAgentId} onChange={event => setSelectedGroupAgentId(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
-                        {selectedSession.participantAgentIds.map(agentId => {
-                          const agentMeta = agents.find(item => item.id === agentId);
-                          return <option key={agentId} value={agentId}>{agentDisplayName(agentMeta) || agentId}</option>;
-                        })}
-                      </select>
-                    </label>
-                  )}
                 </div>
                 <button onClick={loading ? handleAbort : handleSend} disabled={creating || (!loading && !input.trim())} className={`inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-50 ${loading ? 'bg-rose-600 hover:bg-rose-500 dark:bg-rose-500 dark:text-white dark:hover:bg-rose-400' : 'bg-slate-900 hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100'}`}>
                   {loading ? <Square size={15} fill="currentColor" /> : <Send size={16} />}

@@ -205,11 +205,16 @@ const _api = {
   getPanelChatSessions: () => get('/panel-chat/sessions'),
   createPanelChatSession: (data?: { title?: string; chatType?: 'direct' | 'group'; agentId?: string; participantAgentIds?: string[]; controllerAgentId?: string; preferredAgentId?: string; targetId?: string; targetName?: string }) => post('/panel-chat/sessions', data || {}),
   getPanelChatSessionDetail: (id: string) => get(`/panel-chat/sessions/${id}`),
-  getPanelChatLatestTask: (id: string) => get(`/panel-chat/sessions/${id}/task`),
   renamePanelChatSession: (id: string, title: string) => put(`/panel-chat/sessions/${id}`, { title }),
   sendPanelChatMessage: (id: string, message: string, preferredAgentId?: string) => postLong(`/panel-chat/sessions/${id}/messages`, { message, preferredAgentId }, 300000),
   cancelPanelChatMessage: (id: string) => post(`/panel-chat/sessions/${id}/cancel`),
   deletePanelChatSession: (id: string) => del(`/panel-chat/sessions/${id}`),
+  getGroupChatSessions: () => get('/group-chat/sessions'),
+  createGroupChatSession: (data?: { title?: string; hostAgentId?: string; participantAgentIds?: string[] }) => post('/group-chat/sessions', data || {}),
+  getGroupChatSessionDetail: (id: string) => get(`/group-chat/sessions/${id}`),
+  renameGroupChatSession: (id: string, title: string) => put(`/group-chat/sessions/${id}`, { title }),
+  sendGroupChatMessage: (id: string, message: string) => postLong(`/group-chat/sessions/${id}/messages`, { message }, 300000),
+  deleteGroupChatSession: (id: string) => del(`/group-chat/sessions/${id}`),
   // Event Log
   getEvents: (opts?: { limit?: number; offset?: number; source?: string; search?: string }) => {
     const params = new URLSearchParams();
