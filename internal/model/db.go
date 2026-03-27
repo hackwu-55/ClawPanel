@@ -115,6 +115,22 @@ func migrate(db *sql.DB) error {
 		created_at INTEGER NOT NULL
 	);
 	CREATE INDEX IF NOT EXISTS idx_workflow_events_run ON workflow_events(run_id, created_at ASC);
+
+	CREATE TABLE IF NOT EXISTS panel_chat_participants (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		session_id TEXT NOT NULL,
+		agent_id TEXT NOT NULL,
+		role_type TEXT NOT NULL DEFAULT 'assistant',
+		order_index INTEGER NOT NULL DEFAULT 0,
+		auto_reply INTEGER NOT NULL DEFAULT 1,
+		is_summary INTEGER NOT NULL DEFAULT 0,
+		enabled INTEGER NOT NULL DEFAULT 1,
+		openclaw_session_id TEXT NOT NULL DEFAULT '',
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL,
+		UNIQUE(session_id, agent_id)
+	);
+	CREATE INDEX IF NOT EXISTS idx_panel_chat_participants_session ON panel_chat_participants(session_id, order_index ASC);
 	`
 	_, err := db.Exec(schema)
 	return err

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/zhaoxinyi02/ClawPanel/internal/config"
+	"github.com/zhaoxinyi02/ClawPanel/internal/model"
 )
 
 const panelChatDefaultTitle = "新对话"
@@ -39,23 +41,33 @@ type panelChatActiveRun struct {
 }
 
 type panelChatSession struct {
-	ID                   string            `json:"id"`
-	OpenClawSessionID    string            `json:"openclawSessionId"`
-	AgentID              string            `json:"agentId"`
-	ChatType             string            `json:"chatType"`
-	ParticipantAgentIDs  []string          `json:"participantAgentIds,omitempty"`
-	ControllerAgentID    string            `json:"controllerAgentId,omitempty"`
-	PreferredAgentID     string            `json:"preferredAgentId,omitempty"`
-	GroupAgentSessionIDs map[string]string `json:"groupAgentSessionIds,omitempty"`
-	Status               string            `json:"status,omitempty"`
-	Title                string            `json:"title"`
-	TargetID             string            `json:"targetId,omitempty"`
-	TargetName           string            `json:"targetName,omitempty"`
-	CreatedAt            int64             `json:"createdAt"`
-	UpdatedAt            int64             `json:"updatedAt"`
-	Processing           bool              `json:"processing,omitempty"`
-	MessageCount         int               `json:"messageCount"`
-	LastMessage          string            `json:"lastMessage,omitempty"`
+	ID                string `json:"id"`
+	OpenClawSessionID string `json:"openclawSessionId"`
+	AgentID           string `json:"agentId"`
+	ChatType          string `json:"chatType"`
+	Title             string `json:"title"`
+	TargetID          string `json:"targetId,omitempty"`
+	TargetName        string `json:"targetName,omitempty"`
+	CreatedAt         int64  `json:"createdAt"`
+	UpdatedAt         int64  `json:"updatedAt"`
+	Processing        bool   `json:"processing,omitempty"`
+	CurrentAgentID    string `json:"currentAgentId,omitempty"`
+	CurrentAgentName  string `json:"currentAgentName,omitempty"`
+	SummaryAgentID    string `json:"summaryAgentId,omitempty"`
+	MessageCount      int    `json:"messageCount"`
+	LastMessage       string `json:"lastMessage,omitempty"`
+	ParticipantCount  int    `json:"participantCount,omitempty"`
+}
+
+type panelChatParticipantView struct {
+	AgentID           string `json:"agentId"`
+	Name              string `json:"name,omitempty"`
+	RoleType          string `json:"roleType"`
+	OrderIndex        int    `json:"orderIndex"`
+	AutoReply         bool   `json:"autoReply"`
+	IsSummary         bool   `json:"isSummary"`
+	Enabled           bool   `json:"enabled"`
+	OpenClawSessionID string `json:"openclawSessionId,omitempty"`
 }
 
 type panelChatRunResult struct {
@@ -74,113 +86,27 @@ type panelChatCLIResult struct {
 	Result panelChatRunResult `json:"result"`
 }
 
-type panelChatTaskMeta struct {
-	ID                  string   `json:"id"`
-	SessionID           string   `json:"sessionId"`
-	ChatType            string   `json:"chatType"`
-	ControllerAgentID   string   `json:"controllerAgentId"`
-	PreferredAgentID    string   `json:"preferredAgentId"`
-	ParticipantAgentIDs []string `json:"participantAgentIds"`
-	Title               string   `json:"title"`
-	Status              string   `json:"status"`
-	CurrentStage        string   `json:"currentStage"`
-	UserMessageID       string   `json:"userMessageId,omitempty"`
-	CreatedAt           string   `json:"createdAt"`
-	UpdatedAt           string   `json:"updatedAt"`
-}
-
-type panelChatTaskEvent struct {
-	Time          string `json:"time"`
-	Type          string `json:"type"`
-	AgentID       string `json:"agentId,omitempty"`
-	TargetAgentID string `json:"targetAgentId,omitempty"`
-	Message       string `json:"message,omitempty"`
-}
-
-type panelChatSubtask struct {
-	AgentID    string `json:"agentId"`
-	Role       string `json:"role"`
-	Status     string `json:"status"`
-	AssignedAt string `json:"assignedAt,omitempty"`
-	StartedAt  string `json:"startedAt,omitempty"`
-	FinishedAt string `json:"finishedAt,omitempty"`
-	InputRef   string `json:"inputRef,omitempty"`
-	OutputRef  string `json:"outputRef,omitempty"`
-	SummaryRef string `json:"summaryRef,omitempty"`
-	Summary    string `json:"summary,omitempty"`
-}
-
-type panelChatTaskBundle struct {
-	TaskID    string                      `json:"taskId"`
-	Meta      panelChatTaskMeta           `json:"meta"`
-	Spec      string                      `json:"spec"`
-	Result    string                      `json:"result,omitempty"`
-	Error     string                      `json:"error,omitempty"`
-	Timeline  []panelChatTaskEvent        `json:"timeline,omitempty"`
-	Subtasks  map[string]panelChatSubtask `json:"subtasks,omitempty"`
-	WorkItems []panelChatWorkItem         `json:"workitems,omitempty"`
-	Artifacts map[string]string           `json:"artifacts,omitempty"`
-}
-
-type panelChatWorkItem struct {
-	ID        string `json:"id"`
-	AgentID   string `json:"agentId"`
-	Title     string `json:"title"`
-	Status    string `json:"status"`
-	Summary   string `json:"summary,omitempty"`
-	OutputRef string `json:"outputRef,omitempty"`
-}
-
 func panelChatSessionsPath(cfg *config.Config) string {
 	return filepath.Join(cfg.DataDir, "panel-chat", "sessions.json")
 }
 
-func panelChatGroupMessagesPath(cfg *config.Config, sessionID string) string {
-	return filepath.Join(cfg.DataDir, "panel-chat", "groups", sessionID+".json")
-}
-
-func panelChatDirectMessagesPath(cfg *config.Config, sessionID string) string {
+func panelChatMessagesPath(cfg *config.Config, sessionID string) string {
 	return filepath.Join(cfg.DataDir, "panel-chat", "messages", sessionID+".json")
 }
 
-func panelChatTaskDir(cfg *config.Config, taskID string) string {
-	return filepath.Join(cfg.DataDir, "panel-chat", "tasks", taskID)
+func cleanupLegacyPanelChatData(cfg *config.Config) {
+	legacyPaths := []string{
+		filepath.Join(cfg.DataDir, "group-chat"),
+		filepath.Join(cfg.DataDir, "panel-chat", "groups"),
+		filepath.Join(cfg.DataDir, "panel-chat", "tasks"),
+	}
+	for _, path := range legacyPaths {
+		_ = os.RemoveAll(path)
+	}
 }
 
-func panelChatTaskMetaPath(cfg *config.Config, taskID string) string {
-	return filepath.Join(panelChatTaskDir(cfg, taskID), "meta.json")
-}
-
-func panelChatTaskSpecPath(cfg *config.Config, taskID string) string {
-	return filepath.Join(panelChatTaskDir(cfg, taskID), "spec.md")
-}
-
-func panelChatTaskResultPath(cfg *config.Config, taskID string) string {
-	return filepath.Join(panelChatTaskDir(cfg, taskID), "result.md")
-}
-
-func panelChatTaskTimelinePath(cfg *config.Config, taskID string) string {
-	return filepath.Join(panelChatTaskDir(cfg, taskID), "timeline.json")
-}
-
-func panelChatTaskSubtaskPath(cfg *config.Config, taskID, agentID string) string {
-	return filepath.Join(panelChatTaskDir(cfg, taskID), "subtasks", agentID+".json")
-}
-
-func panelChatTaskArtifactPath(cfg *config.Config, taskID, agentID string) string {
-	return filepath.Join(panelChatTaskDir(cfg, taskID), "artifacts", agentID+".md")
-}
-
-func panelChatTaskWorkItemPath(cfg *config.Config, taskID, workItemID string) string {
-	return filepath.Join(panelChatTaskDir(cfg, taskID), "workitems", workItemID+".json")
-}
-
-func panelChatTaskSummaryPath(cfg *config.Config, taskID, agentID string) string {
-	return filepath.Join(panelChatTaskDir(cfg, taskID), "artifacts", agentID+".summary.md")
-}
-
-func loadPanelChatGroupMessages(cfg *config.Config, sessionID string) ([]map[string]interface{}, error) {
-	path := panelChatGroupMessagesPath(cfg, sessionID)
+func loadPanelChatMessages(cfg *config.Config, sessionID string) ([]map[string]interface{}, error) {
+	path := panelChatMessagesPath(cfg, sessionID)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -198,27 +124,8 @@ func loadPanelChatGroupMessages(cfg *config.Config, sessionID string) ([]map[str
 	return messages, nil
 }
 
-func loadPanelChatDirectMessages(cfg *config.Config, sessionID string) ([]map[string]interface{}, error) {
-	path := panelChatDirectMessagesPath(cfg, sessionID)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return []map[string]interface{}{}, nil
-		}
-		return nil, err
-	}
-	var messages []map[string]interface{}
-	if len(strings.TrimSpace(string(data))) == 0 {
-		return []map[string]interface{}{}, nil
-	}
-	if err := json.Unmarshal(data, &messages); err != nil {
-		return nil, err
-	}
-	return messages, nil
-}
-
-func savePanelChatGroupMessages(cfg *config.Config, sessionID string, messages []map[string]interface{}) error {
-	path := panelChatGroupMessagesPath(cfg, sessionID)
+func savePanelChatMessages(cfg *config.Config, sessionID string, messages []map[string]interface{}) error {
+	path := panelChatMessagesPath(cfg, sessionID)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -227,272 +134,10 @@ func savePanelChatGroupMessages(cfg *config.Config, sessionID string, messages [
 		return err
 	}
 	return os.WriteFile(path, append(data, '\n'), 0o644)
-}
-
-func savePanelChatDirectMessages(cfg *config.Config, sessionID string, messages []map[string]interface{}) error {
-	path := panelChatDirectMessagesPath(cfg, sessionID)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(messages, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, append(data, '\n'), 0o644)
-}
-
-func createPanelChatTask(cfg *config.Config, session panelChatSession, userMessage string) (string, error) {
-	taskID := fmt.Sprintf("task-%d", time.Now().UnixMilli())
-	if err := os.MkdirAll(panelChatTaskDir(cfg, taskID), 0o755); err != nil {
-		return "", err
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	meta := panelChatTaskMeta{
-		ID:                  taskID,
-		SessionID:           session.ID,
-		ChatType:            session.ChatType,
-		ControllerAgentID:   session.ControllerAgentID,
-		PreferredAgentID:    session.PreferredAgentID,
-		ParticipantAgentIDs: append([]string{}, session.ParticipantAgentIDs...),
-		Title:               buildPanelChatTitle(userMessage),
-		Status:              "running",
-		CurrentStage:        "user",
-		CreatedAt:           now,
-		UpdatedAt:           now,
-	}
-	if err := writePanelChatTaskMeta(cfg, taskID, meta); err != nil {
-		return "", err
-	}
-	if err := writePanelChatTaskSpec(cfg, taskID, session, userMessage); err != nil {
-		return "", err
-	}
-	_ = appendPanelChatTaskEvent(cfg, taskID, panelChatTaskEvent{Time: now, Type: "task_created", AgentID: session.ControllerAgentID, Message: "任务已创建"})
-	return taskID, nil
-}
-
-func writePanelChatTaskMeta(cfg *config.Config, taskID string, meta panelChatTaskMeta) error {
-	data, err := json.MarshalIndent(meta, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(panelChatTaskMetaPath(cfg, taskID), append(data, '\n'), 0o644)
-}
-
-func writePanelChatTaskSpec(cfg *config.Config, taskID string, session panelChatSession, userMessage string) error {
-	content := fmt.Sprintf("# Task Spec\n\n## User Request\n%s\n\n## Objective\n完成当前群聊任务，并由主控智能体给出最终汇总。\n\n## Participants\n- 主控：%s\n- 优先处理：%s\n- 参与智能体：%s\n", strings.TrimSpace(userMessage), strings.TrimSpace(session.ControllerAgentID), strings.TrimSpace(session.PreferredAgentID), strings.Join(session.ParticipantAgentIDs, ", "))
-	return os.WriteFile(panelChatTaskSpecPath(cfg, taskID), []byte(content), 0o644)
-}
-
-func writePanelChatTaskResult(cfg *config.Config, taskID, result string) error {
-	return os.WriteFile(panelChatTaskResultPath(cfg, taskID), []byte(strings.TrimSpace(result)+"\n"), 0o644)
-}
-
-func writePanelChatTaskFailure(cfg *config.Config, taskID, message string) error {
-	path := filepath.Join(panelChatTaskDir(cfg, taskID), "error.md")
-	return os.WriteFile(path, []byte(strings.TrimSpace(message)+"\n"), 0o644)
-}
-
-func appendPanelChatTaskEvent(cfg *config.Config, taskID string, event panelChatTaskEvent) error {
-	path := panelChatTaskTimelinePath(cfg, taskID)
-	var events []panelChatTaskEvent
-	if data, err := os.ReadFile(path); err == nil && len(strings.TrimSpace(string(data))) > 0 {
-		_ = json.Unmarshal(data, &events)
-	}
-	events = append(events, event)
-	data, err := json.MarshalIndent(events, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, append(data, '\n'), 0o644)
-}
-
-func writePanelChatSubtask(cfg *config.Config, taskID string, subtask panelChatSubtask) error {
-	path := panelChatTaskSubtaskPath(cfg, taskID, subtask.AgentID)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(subtask, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, append(data, '\n'), 0o644)
-}
-
-func writePanelChatWorkItem(cfg *config.Config, taskID string, item panelChatWorkItem) error {
-	path := panelChatTaskWorkItemPath(cfg, taskID, item.ID)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(item, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, append(data, '\n'), 0o644)
-}
-
-func writePanelChatArtifact(cfg *config.Config, taskID, agentID, content string) error {
-	path := panelChatTaskArtifactPath(cfg, taskID, agentID)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(strings.TrimSpace(content)+"\n"), 0o644)
-}
-
-func writePanelChatSummary(cfg *config.Config, taskID, agentID, content string) error {
-	path := panelChatTaskSummaryPath(cfg, taskID, agentID)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(strings.TrimSpace(content)+"\n"), 0o644)
-}
-
-func summarizePanelChatArtifact(content string) string {
-	content = strings.TrimSpace(content)
-	if content == "" {
-		return ""
-	}
-	lines := strings.Split(content, "\n")
-	out := make([]string, 0, 6)
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if strings.HasPrefix(line, "#") || strings.HasPrefix(line, "-") || strings.HasPrefix(line, "*") || strings.HasPrefix(line, "###") {
-			out = append(out, line)
-		} else if len(out) < 2 {
-			out = append(out, line)
-		}
-		if len(out) >= 6 {
-			break
-		}
-	}
-	if len(out) == 0 {
-		runes := []rune(content)
-		if len(runes) > 220 {
-			return string(runes[:220]) + "..."
-		}
-		return content
-	}
-	return strings.Join(out, "\n")
-}
-
-func loadLatestPanelChatTask(cfg *config.Config, sessionID string) (*panelChatTaskBundle, error) {
-	base := filepath.Join(cfg.DataDir, "panel-chat", "tasks")
-	entries, err := os.ReadDir(base)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	type candidate struct {
-		meta panelChatTaskMeta
-		dir  string
-	}
-	var matches []candidate
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		metaPath := filepath.Join(base, entry.Name(), "meta.json")
-		data, err := os.ReadFile(metaPath)
-		if err != nil {
-			continue
-		}
-		var meta panelChatTaskMeta
-		if err := json.Unmarshal(data, &meta); err != nil {
-			continue
-		}
-		if strings.TrimSpace(meta.SessionID) != strings.TrimSpace(sessionID) {
-			continue
-		}
-		matches = append(matches, candidate{meta: meta, dir: filepath.Join(base, entry.Name())})
-	}
-	if len(matches) == 0 {
-		return nil, nil
-	}
-	sort.Slice(matches, func(i, j int) bool { return matches[i].meta.CreatedAt > matches[j].meta.CreatedAt })
-	chosen := matches[0]
-	bundle := &panelChatTaskBundle{TaskID: chosen.meta.ID, Meta: chosen.meta, Subtasks: map[string]panelChatSubtask{}, Artifacts: map[string]string{}}
-	if data, err := os.ReadFile(filepath.Join(chosen.dir, "spec.md")); err == nil {
-		bundle.Spec = string(data)
-	}
-	if data, err := os.ReadFile(filepath.Join(chosen.dir, "result.md")); err == nil {
-		bundle.Result = string(data)
-	}
-	if data, err := os.ReadFile(filepath.Join(chosen.dir, "error.md")); err == nil {
-		bundle.Error = string(data)
-	}
-	if data, err := os.ReadFile(filepath.Join(chosen.dir, "timeline.json")); err == nil {
-		_ = json.Unmarshal(data, &bundle.Timeline)
-	}
-	if entries, err := os.ReadDir(filepath.Join(chosen.dir, "subtasks")); err == nil {
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-				continue
-			}
-			data, err := os.ReadFile(filepath.Join(chosen.dir, "subtasks", entry.Name()))
-			if err != nil {
-				continue
-			}
-			var sub panelChatSubtask
-			if err := json.Unmarshal(data, &sub); err != nil {
-				continue
-			}
-			bundle.Subtasks[sub.AgentID] = sub
-		}
-	}
-	if entries, err := os.ReadDir(filepath.Join(chosen.dir, "artifacts")); err == nil {
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-				continue
-			}
-			data, err := os.ReadFile(filepath.Join(chosen.dir, "artifacts", entry.Name()))
-			if err != nil {
-				continue
-			}
-			agentID := strings.TrimSuffix(entry.Name(), ".md")
-			bundle.Artifacts[agentID] = string(data)
-		}
-	}
-	if entries, err := os.ReadDir(filepath.Join(chosen.dir, "artifacts")); err == nil {
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".summary.md") {
-				continue
-			}
-			data, err := os.ReadFile(filepath.Join(chosen.dir, "artifacts", entry.Name()))
-			if err != nil {
-				continue
-			}
-			agentID := strings.TrimSuffix(entry.Name(), ".summary.md")
-			if sub, ok := bundle.Subtasks[agentID]; ok {
-				sub.Summary = strings.TrimSpace(string(data))
-				bundle.Subtasks[agentID] = sub
-			}
-		}
-	}
-	if entries, err := os.ReadDir(filepath.Join(chosen.dir, "workitems")); err == nil {
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-				continue
-			}
-			data, err := os.ReadFile(filepath.Join(chosen.dir, "workitems", entry.Name()))
-			if err != nil {
-				continue
-			}
-			var item panelChatWorkItem
-			if err := json.Unmarshal(data, &item); err != nil {
-				continue
-			}
-			bundle.WorkItems = append(bundle.WorkItems, item)
-		}
-		sort.Slice(bundle.WorkItems, func(i, j int) bool { return bundle.WorkItems[i].ID < bundle.WorkItems[j].ID })
-	}
-	return bundle, nil
 }
 
 func loadPanelChatSessions(cfg *config.Config) ([]panelChatSession, error) {
+	cleanupLegacyPanelChatData(cfg)
 	path := panelChatSessionsPath(cfg)
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -508,19 +153,34 @@ func loadPanelChatSessions(cfg *config.Config) ([]panelChatSession, error) {
 	if err := json.Unmarshal(data, &sessions); err != nil {
 		return nil, err
 	}
-	return sessions, nil
+	normalized := make([]panelChatSession, 0, len(sessions))
+	for i := range sessions {
+		sessions[i].ChatType = normalizePanelChatType(sessions[i].ChatType)
+		if strings.TrimSpace(sessions[i].AgentID) == "" {
+			sessions[i].AgentID = loadDefaultAgentID(cfg)
+		}
+		if strings.TrimSpace(sessions[i].OpenClawSessionID) == "" {
+			sessions[i].OpenClawSessionID = sessions[i].ID
+		}
+		if strings.TrimSpace(sessions[i].Title) == "" {
+			sessions[i].Title = panelChatDefaultTitle
+		}
+		normalized = append(normalized, sessions[i])
+	}
+	return normalized, nil
 }
 
 func savePanelChatSessions(cfg *config.Config, sessions []panelChatSession) error {
+	cleanupLegacyPanelChatData(cfg)
 	path := panelChatSessionsPath(cfg)
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(sessions, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0644)
+	return os.WriteFile(path, append(data, '\n'), 0o644)
 }
 
 func sortPanelChatSessions(sessions []panelChatSession) {
@@ -542,24 +202,11 @@ func findPanelChatSession(sessions []panelChatSession, id string) (int, *panelCh
 }
 
 func normalizePanelChatType(chatType string) string {
-	return "direct"
-}
-
-func normalizePanelChatAgentIDs(agentIDs []string) []string {
-	seen := map[string]struct{}{}
-	out := make([]string, 0, len(agentIDs))
-	for _, raw := range agentIDs {
-		id := strings.TrimSpace(raw)
-		if id == "" {
-			continue
-		}
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		seen[id] = struct{}{}
-		out = append(out, id)
+	value := strings.ToLower(strings.TrimSpace(chatType))
+	if value == "group" {
+		return "group"
 	}
-	return out
+	return "direct"
 }
 
 func panelChatVirtualTarget(session panelChatSession) string {
@@ -595,26 +242,19 @@ func ensurePanelChatRuntime(cfg *config.Config, session panelChatSession) (state
 	if err = copyFileIfMissing(sourceConfigPath, configPath); err != nil {
 		return "", "", "", err
 	}
-	agentIDs := []string{session.AgentID}
-	if session.ChatType == "group" {
-		agentIDs = append(agentIDs, session.ParticipantAgentIDs...)
+	srcAgentDir := filepath.Join(cfg.OpenClawDir, "agents", session.AgentID)
+	scopedAgentID := panelChatScopedAgentID(session.ID, session.AgentID)
+	dstAgentDir := filepath.Join(stateDir, "agents", scopedAgentID)
+	if err = copyDirWithoutSessions(srcAgentDir, dstAgentDir); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", "", "", err
 	}
-	agentIDs = normalizePanelChatAgentIDs(agentIDs)
-	for _, agentID := range agentIDs {
-		srcAgentDir := filepath.Join(cfg.OpenClawDir, "agents", agentID)
-		scopedAgentID := panelChatScopedAgentID(session.ID, agentID)
-		dstAgentDir := filepath.Join(stateDir, "agents", scopedAgentID)
-		if err = copyDirWithoutSessions(srcAgentDir, dstAgentDir); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return "", "", "", err
-		}
-		_ = os.MkdirAll(filepath.Join(dstAgentDir, "sessions"), 0o755)
-		srcWorkspace := filepath.Join(cfg.OpenClawWork, agentID)
-		dstWorkspace := filepath.Join(workDir, "openclaw-work", scopedAgentID)
-		if err = copyDirIfMissing(srcWorkspace, dstWorkspace); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return "", "", "", err
-		}
+	_ = os.MkdirAll(filepath.Join(dstAgentDir, "sessions"), 0o755)
+	srcWorkspace := filepath.Join(cfg.OpenClawWork, session.AgentID)
+	dstWorkspace := filepath.Join(workDir, "openclaw-work", scopedAgentID)
+	if err = copyDirIfMissing(srcWorkspace, dstWorkspace); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", "", "", err
 	}
-	if err = rewritePanelChatRuntimeConfig(sourceConfigPath, configPath, session, agentIDs); err != nil {
+	if err = rewritePanelChatRuntimeConfig(sourceConfigPath, configPath, session); err != nil {
 		return "", "", "", err
 	}
 	return stateDir, configPath, workDir, nil
@@ -699,7 +339,7 @@ func copyDirWithoutSessions(src, dst string) error {
 	})
 }
 
-func rewritePanelChatRuntimeConfig(srcConfigPath, dstConfigPath string, session panelChatSession, agentIDs []string) error {
+func rewritePanelChatRuntimeConfig(srcConfigPath, dstConfigPath string, session panelChatSession) error {
 	data, err := os.ReadFile(srcConfigPath)
 	if err != nil {
 		return err
@@ -710,28 +350,22 @@ func rewritePanelChatRuntimeConfig(srcConfigPath, dstConfigPath string, session 
 	}
 	agentsMap := readMap(obj["agents"])
 	list, _ := agentsMap["list"].([]interface{})
-	newList := make([]interface{}, 0, len(agentIDs))
-	for _, agentID := range agentIDs {
-		for _, raw := range list {
-			agent, ok := raw.(map[string]interface{})
-			if !ok || strings.TrimSpace(toString(agent["id"])) != agentID {
-				continue
-			}
-			cloned := map[string]interface{}{}
-			for k, v := range agent {
-				cloned[k] = v
-			}
-			scopedID := panelChatScopedAgentID(session.ID, agentID)
-			cloned["id"] = scopedID
-			cloned["workspace"] = filepath.ToSlash(filepath.Join("openclaw-work", scopedID))
-			if strings.TrimSpace(agentID) == strings.TrimSpace(session.ControllerAgentID) || (session.ControllerAgentID == "" && strings.TrimSpace(agentID) == strings.TrimSpace(session.AgentID)) {
-				cloned["default"] = true
-			} else {
-				cloned["default"] = false
-			}
-			newList = append(newList, cloned)
-			break
+	newList := make([]interface{}, 0, 1)
+	for _, raw := range list {
+		agent, ok := raw.(map[string]interface{})
+		if !ok || strings.TrimSpace(toString(agent["id"])) != session.AgentID {
+			continue
 		}
+		cloned := map[string]interface{}{}
+		for k, v := range agent {
+			cloned[k] = v
+		}
+		scopedID := panelChatScopedAgentID(session.ID, session.AgentID)
+		cloned["id"] = scopedID
+		cloned["workspace"] = filepath.ToSlash(filepath.Join("openclaw-work", scopedID))
+		cloned["default"] = true
+		newList = append(newList, cloned)
+		break
 	}
 	agentsMap["list"] = newList
 	obj["agents"] = agentsMap
@@ -740,27 +374,6 @@ func rewritePanelChatRuntimeConfig(srcConfigPath, dstConfigPath string, session 
 		return err
 	}
 	return os.WriteFile(dstConfigPath, append(encoded, '\n'), 0o644)
-}
-
-func containsPanelChatAgent(agentIDs []string, target string) bool {
-	target = strings.TrimSpace(target)
-	for _, id := range agentIDs {
-		if strings.TrimSpace(id) == target {
-			return true
-		}
-	}
-	return false
-}
-
-func clonePanelChatSessionMap(raw map[string]string) map[string]string {
-	if len(raw) == 0 {
-		return map[string]string{}
-	}
-	out := make(map[string]string, len(raw))
-	for k, v := range raw {
-		out[k] = v
-	}
-	return out
 }
 
 func buildPanelChatTitle(input string) string {
@@ -773,6 +386,117 @@ func buildPanelChatTitle(input string) string {
 		return strings.TrimSpace(string(runes[:24])) + "..."
 	}
 	return input
+}
+
+func loadPanelChatAgentNameMap(cfg *config.Config) map[string]string {
+	ocConfig, _ := cfg.ReadOpenClawJSON()
+	if ocConfig == nil {
+		return map[string]string{}
+	}
+	list := materializeAgentList(cfg, ocConfig)
+	nameMap := make(map[string]string, len(list))
+	for _, item := range list {
+		id := strings.TrimSpace(toString(item["id"]))
+		if id == "" {
+			continue
+		}
+		name := strings.TrimSpace(toString(item["name"]))
+		identity := readMap(item["identity"])
+		if name == "" {
+			name = strings.TrimSpace(toString(identity["name"]))
+		}
+		if name == "" {
+			name = id
+		}
+		nameMap[id] = name
+	}
+	return nameMap
+}
+
+func normalizePanelChatParticipantInput(agentIDs []string, primaryAgentID, summaryAgentID string) []model.PanelChatParticipant {
+	seen := map[string]struct{}{}
+	items := make([]model.PanelChatParticipant, 0, len(agentIDs)+1)
+	appendItem := func(agentID, roleType string, isSummary bool) {
+		agentID = strings.TrimSpace(agentID)
+		if agentID == "" {
+			return
+		}
+		if _, ok := seen[agentID]; ok {
+			return
+		}
+		seen[agentID] = struct{}{}
+		items = append(items, model.PanelChatParticipant{AgentID: agentID, RoleType: roleType, AutoReply: true, Enabled: true, IsSummary: isSummary})
+	}
+	for _, agentID := range agentIDs {
+		appendItem(agentID, "assistant", false)
+	}
+	if len(items) == 0 {
+		appendItem(primaryAgentID, "assistant", false)
+	}
+	summaryAgentID = strings.TrimSpace(summaryAgentID)
+	if summaryAgentID != "" {
+		if _, ok := seen[summaryAgentID]; ok {
+			for i := range items {
+				if items[i].AgentID == summaryAgentID {
+					items[i].IsSummary = true
+					items[i].RoleType = "summary"
+				}
+			}
+		} else {
+			appendItem(summaryAgentID, "summary", true)
+		}
+	}
+	return items
+}
+
+func loadPanelChatParticipants(db *sql.DB, cfg *config.Config, session panelChatSession) ([]panelChatParticipantView, error) {
+	items, err := model.ListPanelChatParticipants(db, session.ID)
+	if err != nil {
+		return nil, err
+	}
+	nameMap := loadPanelChatAgentNameMap(cfg)
+	views := make([]panelChatParticipantView, 0, len(items))
+	for _, item := range items {
+		if !item.Enabled {
+			continue
+		}
+		views = append(views, panelChatParticipantView{
+			AgentID:           item.AgentID,
+			Name:              nameMap[item.AgentID],
+			RoleType:          item.RoleType,
+			OrderIndex:        item.OrderIndex,
+			AutoReply:         item.AutoReply,
+			IsSummary:         item.IsSummary,
+			Enabled:           item.Enabled,
+			OpenClawSessionID: item.OpenClawSessionID,
+		})
+	}
+	if len(views) == 0 && strings.TrimSpace(session.AgentID) != "" {
+		views = append(views, panelChatParticipantView{AgentID: session.AgentID, Name: nameMap[session.AgentID], RoleType: "assistant", OrderIndex: 0, AutoReply: true, Enabled: true})
+	}
+	return views, nil
+}
+
+func decoratePanelChatSession(db *sql.DB, cfg *config.Config, session *panelChatSession) {
+	if session == nil {
+		return
+	}
+	participants, err := loadPanelChatParticipants(db, cfg, *session)
+	if err != nil {
+		if strings.TrimSpace(session.AgentID) != "" {
+			session.ParticipantCount = 1
+		}
+		return
+	}
+	session.ParticipantCount = len(participants)
+	if session.ChatType == "group" {
+		for _, item := range participants {
+			if item.IsSummary {
+				session.SummaryAgentID = item.AgentID
+				break
+			}
+		}
+	}
 }
 
 func panelChatSessionFile(cfg *config.Config, agentID, openclawSessionID string) string {
@@ -843,10 +567,7 @@ func extractPanelChatPayloads(content interface{}) (string, []map[string]string)
 }
 
 func readPanelChatMessages(cfg *config.Config, session panelChatSession) ([]map[string]interface{}, error) {
-	if session.ChatType == "group" {
-		return loadPanelChatGroupMessages(cfg, session.ID)
-	}
-	localMessages, err := loadPanelChatDirectMessages(cfg, session.ID)
+	localMessages, err := loadPanelChatMessages(cfg, session.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -905,10 +626,15 @@ func readPanelChatMessages(cfg *config.Config, session panelChatSession) ([]map[
 		}
 		ts, _ := entry["timestamp"].(string)
 		message := map[string]interface{}{
-			"id":        entry["id"],
-			"role":      role,
-			"content":   content,
-			"timestamp": ts,
+			"id":         entry["id"],
+			"role":       role,
+			"senderType": map[string]string{"user": "user", "assistant": "agent"}[role],
+			"content":    content,
+			"timestamp":  ts,
+		}
+		if role == "assistant" {
+			message["agentId"] = session.AgentID
+			message["messageType"] = "chat"
 		}
 		if len(images) > 0 {
 			message["images"] = images
@@ -1070,6 +796,126 @@ func runPanelChatMessage(ctx context.Context, cfg *config.Config, session panelC
 	return strings.Join(parts, "\n\n"), strings.TrimSpace(result.Result.Meta.AgentMeta.SessionID), nil
 }
 
+func buildGroupChatPrompt(agentName string, participant panelChatParticipantView, transcript []map[string]interface{}, latestUserMessage string) string {
+	lines := []string{
+		fmt.Sprintf("你正在参与一个多 AI 角色群聊。你的身份是：%s。", strings.TrimSpace(agentName)),
+		"请只以你自己的身份回复，不要伪造其他角色的发言，不要输出多余前缀。",
+	}
+	if participant.IsSummary {
+		lines = append(lines, "你是本轮总结 AI。请基于对话和其他 AI 的回复，给出面向用户的最终汇总。")
+	} else {
+		lines = append(lines, "请结合已有聊天上下文，直接补充你的观点或答案。")
+	}
+	lines = append(lines, "", "以下是共享消息流（按时间顺序，最近消息在后）：")
+	start := 0
+	if len(transcript) > 12 {
+		start = len(transcript) - 12
+	}
+	for _, item := range transcript[start:] {
+		role := strings.TrimSpace(toString(item["role"]))
+		senderType := strings.TrimSpace(toString(item["senderType"]))
+		content := strings.TrimSpace(toString(item["content"]))
+		if content == "" {
+			continue
+		}
+		speaker := "用户"
+		if senderType == "agent" || role == "assistant" {
+			agentID := strings.TrimSpace(toString(item["agentId"]))
+			agentNameInMsg := strings.TrimSpace(toString(item["agentName"]))
+			if agentNameInMsg != "" && agentID != "" {
+				speaker = fmt.Sprintf("AI %s(%s)", agentNameInMsg, agentID)
+			} else if agentID != "" {
+				speaker = fmt.Sprintf("AI %s", agentID)
+			} else {
+				speaker = "AI"
+			}
+		} else if senderType == "system" || role == "system" {
+			speaker = "系统"
+		}
+		lines = append(lines, fmt.Sprintf("- %s：%s", speaker, content))
+	}
+	if strings.TrimSpace(latestUserMessage) != "" {
+		lines = append(lines, "", "用户当前最新输入：", latestUserMessage)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func executeGroupPanelChat(ctx context.Context, db *sql.DB, cfg *config.Config, session panelChatSession, participants []panelChatParticipantView, existingMessages []map[string]interface{}, userMessage string) ([]map[string]interface{}, string, error) {
+	nameMap := loadPanelChatAgentNameMap(cfg)
+	messages := append([]map[string]interface{}{}, existingMessages...)
+	userTimestamp := time.Now().UTC().Format(time.RFC3339)
+	userEntry := map[string]interface{}{
+		"id":          fmt.Sprintf("user-%d", time.Now().UnixNano()),
+		"role":        "user",
+		"senderType":  "user",
+		"messageType": "chat",
+		"content":     strings.TrimSpace(userMessage),
+		"timestamp":   userTimestamp,
+	}
+	messages = append(messages, userEntry)
+	lastReply := ""
+	for _, participant := range participants {
+		if !participant.Enabled || !participant.AutoReply {
+			continue
+		}
+		agentName := participant.Name
+		if strings.TrimSpace(agentName) == "" {
+			agentName = nameMap[participant.AgentID]
+		}
+		_, _ = updatePanelChatSessionState(cfg, session.ID, func(item *panelChatSession) {
+			item.Processing = true
+			item.CurrentAgentID = participant.AgentID
+			item.CurrentAgentName = agentName
+			item.UpdatedAt = time.Now().UnixMilli()
+		})
+		prompt := buildGroupChatPrompt(agentName, participant, messages, userMessage)
+		runtimeSession := session
+		runtimeSession.AgentID = participant.AgentID
+		runtimeSession.OpenClawSessionID = strings.TrimSpace(participant.OpenClawSessionID)
+		if runtimeSession.OpenClawSessionID == "" {
+			runtimeSession.OpenClawSessionID = fmt.Sprintf("%s-%s", session.ID, participant.AgentID)
+		}
+		reply, actualSessionID, err := runPanelChatMessage(ctx, cfg, runtimeSession, prompt)
+		if strings.TrimSpace(reply) == "" || err != nil {
+			if rawMessages, historyErr := readSessionMessages(panelChatRuntimeSessionFile(cfg, runtimeSession), 200); historyErr == nil {
+				recovered := extractLatestAssistantReply(rawMessages, prompt)
+				if strings.TrimSpace(recovered) != "" {
+					reply = recovered
+					if errors.Is(err, errPanelChatTimeout) {
+						err = nil
+					}
+				}
+			}
+		}
+		if strings.TrimSpace(actualSessionID) != "" {
+			_ = model.UpdatePanelChatParticipantOpenClawSession(db, session.ID, participant.AgentID, strings.TrimSpace(actualSessionID))
+		}
+		if err != nil {
+			return messages, lastReply, err
+		}
+		reply = sanitizePanelChatContent(reply)
+		if strings.TrimSpace(reply) == "" {
+			continue
+		}
+		lastReply = reply
+		messageType := "chat"
+		if participant.IsSummary {
+			messageType = "summary"
+		}
+		messages = append(messages, map[string]interface{}{
+			"id":          fmt.Sprintf("agent-%s-%d", participant.AgentID, time.Now().UnixNano()),
+			"role":        "assistant",
+			"senderType":  "agent",
+			"agentId":     participant.AgentID,
+			"agentName":   agentName,
+			"messageType": messageType,
+			"content":     reply,
+			"timestamp":   time.Now().UTC().Format(time.RFC3339),
+		})
+	}
+	return messages, lastReply, nil
+}
+
 func CancelPanelChatMessage(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		sessionID := strings.TrimSpace(c.Param("id"))
@@ -1141,6 +987,21 @@ func extractLatestPanelChatExchange(messages []map[string]interface{}, userMessa
 	return result
 }
 
+func extractLatestAssistantReply(messages []map[string]interface{}, userMessage string) string {
+	exchange := extractLatestPanelChatExchange(messages, userMessage)
+	for i := len(exchange) - 1; i >= 0; i-- {
+		role, _ := exchange[i]["role"].(string)
+		if role != "assistant" {
+			continue
+		}
+		content := sanitizePanelChatContent(toString(exchange[i]["content"]))
+		if strings.TrimSpace(content) != "" {
+			return content
+		}
+	}
+	return ""
+}
+
 func mergePanelChatTranscripts(existing, incoming []map[string]interface{}) []map[string]interface{} {
 	if len(existing) == 0 {
 		return incoming
@@ -1189,460 +1050,31 @@ func updatePanelChatSessionState(cfg *config.Config, sessionID string, mutate fu
 	return &sessions[0], nil
 }
 
-func newPanelChatTimelineMessage(sessionID, role, content, agentID, stage string, internal bool) map[string]interface{} {
-	msg := map[string]interface{}{
-		"id":        fmt.Sprintf("%s-%d", role, time.Now().UnixNano()),
-		"role":      role,
-		"content":   strings.TrimSpace(content),
-		"timestamp": time.Now().UTC().Format(time.RFC3339),
-	}
-	if sessionID != "" {
-		msg["sessionId"] = sessionID
-	}
-	if agentID != "" {
-		msg["agentId"] = agentID
-	}
-	if stage != "" {
-		msg["stage"] = stage
-	}
-	if internal {
-		msg["internal"] = true
-	}
-	return msg
-}
-
-func buildPanelChatSpecialistPrompt(session panelChatSession, userMessage, targetAgentID string) string {
-	controller := strings.TrimSpace(session.ControllerAgentID)
-	if controller == "" {
-		controller = "main"
-	}
-	participants := strings.Join(session.ParticipantAgentIDs, ", ")
-	scope := "只处理属于你职责的技术或实现部分。"
-	if strings.EqualFold(targetAgentID, "coding") {
-		scope = "你只处理技术实现部分：规则设计、系统结构、模块划分、数据结构、平衡数值建议。不要负责报告正文、文案润色、最终风险总结。输出尽量控制在 6 个小点以内。"
-	}
-	return fmt.Sprintf("你正在参与一个多智能体协作群聊。\n你的 agentId 是 %s。\n主控 agentId 是 %s。\n参与智能体有：%s。\n\n用户原始问题：\n%s\n\n职责范围说明：%s\n\n请先判断这件事是否主要属于你的职责范围。\n- 如果主要属于你的职责范围，请给出面向主控智能体的专项处理结果。\n- 如果只有少部分与你相关，请说明你能处理的部分，并明确哪些部分应该交回主控智能体。\n- 如果明显不属于你的职责范围，请直接回复：HANDOFF_TO_MAIN，并简述原因。\n\n额外规则：\n1. 不要长时间停留在泛泛澄清阶段。只要已有信息足够开始，请先给出阶段性成果。\n2. 对于课程设计/软件项目类任务，即使信息不完整，也至少先产出：功能拆解、模块划分、数据结构建议或下一步执行框架。\n3. 你的结果要尽量细化，优先拆成可执行小项，不要只给“大概方向”。\n4. 如果需要补充信息，请把“待补充项”放在最后，并同时给出你已经能确定的结论。\n5. 不要输出 thinking、推理痕迹、XML/HTML 标签或内部协议说明。\n\n注意：\n- 你现在不是直接对用户回复。\n- 你的输出对象是主控智能体。\n- 回答尽量结构化、简洁、专业。", targetAgentID, controller, participants, userMessage, scope)
-}
-
-func buildPanelChatControllerPrompt(session panelChatSession, userMessage, preferredAgentID, specialistReport string) string {
-	return buildPanelChatControllerPromptWithReview(session, userMessage, preferredAgentID, specialistReport, "")
-}
-
-func buildPanelChatControllerPromptWithReview(session panelChatSession, userMessage, preferredAgentID, specialistReport, reviewerReport string) string {
-	controller := strings.TrimSpace(session.ControllerAgentID)
-	if controller == "" {
-		controller = "main"
-	}
-	participants := strings.Join(session.ParticipantAgentIDs, ", ")
-	reportBlock := ""
-	if strings.TrimSpace(specialistReport) != "" {
-		reportBlock = fmt.Sprintf("\n\n优先处理智能体 %s 的内部回报：\n%s", preferredAgentID, specialistReport)
-	}
-	reviewBlock := ""
-	if strings.TrimSpace(reviewerReport) != "" {
-		reviewBlock = fmt.Sprintf("\n\nreviewer 的校验结果：\n%s", reviewerReport)
-	}
-	return fmt.Sprintf("你是当前群聊的主控智能体 %s。\n参与智能体有：%s。\n用户当前问题：\n%s%s%s\n\n请按以下规则输出最终给用户的答复：\n1. 如果问题简单，可以直接给出结论和方案。\n2. 如果问题主要属于某个领域，结合该智能体的回报进行总结。\n3. 如果 reviewer 已给出校验意见，请优先采用校验后的结论。\n4. 如果问题明显超出当前参与智能体能力范围，明确建议用户创建更合适的智能体。\n5. 对课程设计/项目开发类任务，不要一直卡在补信息。只要题目、核心要求、规模已知，就先给出可执行的阶段成果，例如功能清单、模块设计、数据结构、开发计划或代码框架。\n6. 任务拆解时尽量细化，不要只给笼统大项。优先拆成可执行的小任务，例如：数据结构设计、菜单流程、文件读写、测试用例、报告目录，而不是一句“完成系统设计”。\n7. 如果确实需要用户补充信息，请在答复末尾列出最少必要项，并且先交付你已经可以完成的部分。\n8. 不要暴露内部协作细节、thinking、工具痕迹或标签内容。最终答复应面向用户、清晰、可执行。", controller, participants, userMessage, reportBlock, reviewBlock)
-}
-
-func buildPanelChatReviewerPrompt(session panelChatSession, userMessage, specialistReport string) string {
-	participants := strings.Join(session.ParticipantAgentIDs, ", ")
-	return fmt.Sprintf("你正在参与一个多智能体协作群聊校验环节。\n你的角色是 reviewer。\n参与智能体有：%s。\n\n用户原始问题：\n%s\n\n待校验的执行回报：\n%s\n\n请从以下维度做校验：\n1. 是否回答了用户核心问题\n2. 是否有明显遗漏或越权\n3. 是否需要补充风险提示\n4. 是否把可先执行的部分先推进了，而不是一味停留在澄清阶段\n5. 是否可以交由主控智能体对外总结\n\n请输出简洁、结构化的校验意见，不要输出 thinking 或内部标签。", participants, userMessage, specialistReport)
-}
-
-func buildPanelChatWriterPrompt(session panelChatSession, userMessage, specialistReport string) string {
-	participants := strings.Join(session.ParticipantAgentIDs, ", ")
-	return fmt.Sprintf("你正在参与一个多智能体协作群聊。\n你的角色是 writer。\n参与智能体有：%s。\n\n用户原始问题：\n%s\n\n如果问题涉及报告、说明文档、总结、设计文档、Word 文档、答辩材料、交付说明，请输出面向主控智能体的文档结构化成果。\n\n你必须优先产出：\n1. 报告目录或章节结构\n2. 每章应写什么\n3. 若已有 coding 的专项回报，可将其整理成适合课程设计/说明文档的书写框架\n4. 若任务是课程设计/项目交付，至少给出一份可直接使用的文档骨架\n\nCoding 的专项结果如下：\n%s\n\n硬性规则：\n- 只输出可直接整合进最终文档/报告的内容\n- 不要输出 thinking、内部标签、闲聊口吻\n- 不要重复解释自己的职责\n- 如果需要文档，请务必输出正文骨架，不要只说“可以由 writer 补强”\n- 只有在任务完全与文档无关时，才回复：WRITER_NOT_NEEDED", participants, userMessage, specialistReport)
-}
-
-func buildPanelChatReworkPrompt(session panelChatSession, userMessage, priorReport, reviewerReport, agentID string) string {
-	return fmt.Sprintf("你正在处理一轮返工任务。\n当前 agentId: %s\n用户原始问题：\n%s\n\n你上一轮产出：\n%s\n\nreviewer 的返工意见：\n%s\n\n请根据 reviewer 意见重新输出一版更可交付的结果。\n要求：\n- 直接输出修订后的结果\n- 不要解释太多过程\n- 不要输出 thinking 或内部标签", agentID, userMessage, priorReport, reviewerReport)
-}
-
-func panelChatNeedsWriter(userMessage string) bool {
-	text := strings.ToLower(userMessage)
-	keywords := []string{"报告", "文档", "说明", "word", "总结", "答辩", "设计书", "设计报告", "report", "doc", "文案", "礼包", "活动说明", "公告", "活动文案", "shop copy"}
-	for _, keyword := range keywords {
-		if strings.Contains(text, strings.ToLower(keyword)) {
-			return true
-		}
-	}
-	return false
-}
-
-func buildPanelChatWriterFallback(userMessage, specialistReport string) string {
-	return fmt.Sprintf("## 报告结构建议\n\n### 1. 课题名称\n- 直接写本次课程设计题目\n\n### 2. 设计目的\n- 说明本系统要解决的问题\n- 说明训练的 C 语言知识点：结构体、函数、文件操作、菜单程序\n\n### 3. 总体设计\n- 系统总体功能说明\n- 模块划分\n- 程序流程\n\n### 4. 详细设计\n- 数据结构设计\n- 各功能模块说明\n- 文件存储设计\n- 核心算法说明\n\n### 5. 程序清单\n- 附完整源代码\n- 说明关键函数作用\n\n### 6. 运行结果及分析\n- 菜单界面\n- 新增/查询/修改/删除结果\n- 功能测试分析\n\n### 7. 总结\n- 本次课设完成情况\n- 学到的知识点\n- 存在问题与改进方向\n\n---\n\n### 可直接整合进报告的写作建议\n- 先按 Coding 的技术方案写“总体设计”和“详细设计”\n- 再补“运行结果”和“总结”\n- 若学校有固定模板，再对标题和封面格式做适配\n\n用户原始任务：%s\n\nCoding 专项结果摘要：\n%s", userMessage, specialistReport)
-}
-
-func extractPanelChatUserRequest(spec string) string {
-	marker := "## User Request\n"
-	idx := strings.Index(spec, marker)
-	if idx == -1 {
-		return strings.TrimSpace(spec)
-	}
-	rest := spec[idx+len(marker):]
-	if end := strings.Index(rest, "\n\n## "); end >= 0 {
-		return strings.TrimSpace(rest[:end])
-	}
-	return strings.TrimSpace(rest)
-}
-
-func splitPanelChatComplexTask(userMessage string) map[string][]string {
-	parts := []string{}
-	for _, seg := range regexp.MustCompile(`[\n；;]+`).Split(userMessage, -1) {
-		seg = strings.TrimSpace(seg)
-		if seg == "" {
-			continue
-		}
-		parts = append(parts, seg)
-	}
-	if len(parts) <= 1 {
-		return nil
-	}
-	out := map[string][]string{}
-	for _, part := range parts {
-		lower := strings.ToLower(part)
-		switch {
-		case strings.Contains(lower, "文案") || strings.Contains(lower, "新闻稿") || strings.Contains(lower, "报告") || strings.Contains(lower, "结构") || strings.Contains(lower, "宣传"):
-			out["writer"] = append(out["writer"], part)
-		case strings.Contains(lower, "风险") || strings.Contains(lower, "回滚") || strings.Contains(lower, "验收") || strings.Contains(lower, "校验") || strings.Contains(lower, "检查"):
-			out["reviewer"] = append(out["reviewer"], part)
-		default:
-			out["coding"] = append(out["coding"], part)
-		}
-	}
-	return out
-}
-
-func joinPanelChatTaskParts(parts []string) string {
-	if len(parts) == 0 {
-		return ""
-	}
-	return "- " + strings.Join(parts, "\n- ")
-}
-
-func buildPanelChatWorkItems(userMessage string) []panelChatWorkItem {
-	buckets := splitPanelChatComplexTask(userMessage)
-	if len(buckets) == 0 {
-		return nil
-	}
-	items := make([]panelChatWorkItem, 0, 8)
-	seq := 1
-	for agentID, parts := range buckets {
-		for _, part := range parts {
-			items = append(items, panelChatWorkItem{
-				ID:      fmt.Sprintf("subtask-%02d", seq),
-				AgentID: agentID,
-				Title:   part,
-				Status:  "pending",
-			})
-			seq++
-		}
-	}
-	sort.Slice(items, func(i, j int) bool { return items[i].ID < items[j].ID })
-	return items
-}
-
-func buildPanelChatWorkItemPrompt(session panelChatSession, item panelChatWorkItem) string {
-	switch item.AgentID {
-	case "writer":
-		return buildPanelChatWriterPrompt(session, item.Title, "")
-	case "reviewer":
-		return buildPanelChatReviewerPrompt(session, item.Title, "")
-	default:
-		return buildPanelChatSpecialistPrompt(session, item.Title, item.AgentID)
-	}
-}
-
-func panelChatReviewerRequestsRework(report string) bool {
-	text := strings.ToLower(report)
-	keywords := []string{"返工", "需返工", "建议返工", "不可交付", "需要重写", "需要重做", "not ready", "rework"}
-	for _, keyword := range keywords {
-		if strings.Contains(text, strings.ToLower(keyword)) {
-			return true
-		}
-	}
-	return false
-}
-
-func runPanelChatGroupWorkflow(ctx context.Context, cfg *config.Config, session panelChatSession, taskID, userMessage, preferredAgentID string) ([]map[string]interface{}, string, map[string]string, error) {
-	messages, err := loadPanelChatGroupMessages(cfg, session.ID)
-	if err != nil {
-		return nil, "", nil, err
-	}
-	controller := strings.TrimSpace(session.ControllerAgentID)
-	if controller == "" {
-		controller = session.AgentID
-	}
-	if controller == "" {
-		controller = "main"
-	}
-	participants := normalizePanelChatAgentIDs(session.ParticipantAgentIDs)
-	if len(participants) == 0 {
-		participants = []string{controller}
-	}
-	if !containsPanelChatAgent(participants, controller) {
-		participants = append([]string{controller}, participants...)
-		participants = normalizePanelChatAgentIDs(participants)
-	}
-	preferred := strings.TrimSpace(preferredAgentID)
-	if preferred == "" || !containsPanelChatAgent(participants, preferred) {
-		preferred = controller
-	}
-	groupSessionIDs := clonePanelChatSessionMap(session.GroupAgentSessionIDs)
-	taskBuckets := splitPanelChatComplexTask(userMessage)
-	messages = append(messages, newPanelChatTimelineMessage(session.ID, "user", userMessage, "", "user", false))
-	if workItems := buildPanelChatWorkItems(userMessage); len(workItems) >= 4 {
-		messages = append(messages, newPanelChatTimelineMessage(session.ID, "assistant", fmt.Sprintf("任务较复杂，已拆分为 %d 个独立子任务，分别交由对应智能体处理。", len(workItems)), controller, "plan", true))
-		summaryBlocks := make([]string, 0, len(workItems))
-		for _, item := range workItems {
-			if taskID != "" {
-				item.Status = "running"
-				_ = writePanelChatWorkItem(cfg, taskID, item)
-				_ = appendPanelChatTaskEvent(cfg, taskID, panelChatTaskEvent{Time: time.Now().UTC().Format(time.RFC3339), Type: "subtask_dispatched", AgentID: controller, TargetAgentID: item.AgentID, Message: item.Title})
-			}
-			sessionID := strings.TrimSpace(groupSessionIDs[item.AgentID])
-			if sessionID == "" {
-				sessionID = fmt.Sprintf("%s-%s", session.ID, item.AgentID)
-			}
-			report, actualSessionID, err := runPanelChatMessage(ctx, cfg, panelChatSession{ID: session.ID, AgentID: item.AgentID, OpenClawSessionID: sessionID, ControllerAgentID: controller, ParticipantAgentIDs: participants, ChatType: session.ChatType}, buildPanelChatWorkItemPrompt(session, item))
-			if err != nil {
-				if taskID != "" {
-					item.Status = "failed"
-					item.Summary = err.Error()
-					_ = writePanelChatWorkItem(cfg, taskID, item)
-					_ = appendPanelChatTaskEvent(cfg, taskID, panelChatTaskEvent{Time: time.Now().UTC().Format(time.RFC3339), Type: "subtask_failed", AgentID: item.AgentID, Message: err.Error()})
-				}
-				return messages, "", groupSessionIDs, err
-			}
-			if strings.TrimSpace(actualSessionID) != "" {
-				groupSessionIDs[item.AgentID] = strings.TrimSpace(actualSessionID)
-			}
-			report = strings.TrimSpace(report)
-			summary := summarizePanelChatArtifact(report)
-			if report != "" {
-				messages = append(messages, newPanelChatTimelineMessage(session.ID, "assistant", report, item.AgentID, "report", true))
-			}
-			if taskID != "" {
-				item.Status = "done"
-				item.Summary = summary
-				item.OutputRef = filepath.Join("artifacts", item.ID+"-"+item.AgentID+".md")
-				_ = writePanelChatWorkItem(cfg, taskID, item)
-				_ = writePanelChatArtifact(cfg, taskID, item.ID+"-"+item.AgentID, report)
-				_ = writePanelChatSummary(cfg, taskID, item.ID+"-"+item.AgentID, summary)
-				_ = writePanelChatSubtask(cfg, taskID, panelChatSubtask{AgentID: item.AgentID, Role: "executor", Status: "done", AssignedAt: time.Now().UTC().Format(time.RFC3339), StartedAt: time.Now().UTC().Format(time.RFC3339), FinishedAt: time.Now().UTC().Format(time.RFC3339), InputRef: "spec.md", OutputRef: item.OutputRef, Summary: summary, SummaryRef: filepath.Join("artifacts", item.ID+"-"+item.AgentID+".summary.md")})
-			}
-			if summary != "" {
-				summaryBlocks = append(summaryBlocks, fmt.Sprintf("[%s]\n%s", item.Title, summary))
-			}
-		}
-		controllerSessionID := strings.TrimSpace(groupSessionIDs[controller])
-		if controllerSessionID == "" {
-			controllerSessionID = fmt.Sprintf("%s-%s", session.ID, controller)
-		}
-		finalPrompt := fmt.Sprintf("你是主控智能体 %s。\n用户原始任务：\n%s\n\n以下是各独立子任务的摘要，请只基于这些摘要生成最终交付结果，不要重新展开全部细节：\n\n%s", controller, userMessage, strings.Join(summaryBlocks, "\n\n"))
-		finalReply, actualSessionID, err := runPanelChatMessage(ctx, cfg, panelChatSession{ID: session.ID, AgentID: controller, OpenClawSessionID: controllerSessionID}, finalPrompt)
-		if err != nil {
-			return messages, "", groupSessionIDs, err
-		}
-		if strings.TrimSpace(actualSessionID) != "" {
-			groupSessionIDs[controller] = strings.TrimSpace(actualSessionID)
-		}
-		finalReply = strings.TrimSpace(finalReply)
-		if finalReply != "" {
-			messages = append(messages, newPanelChatTimelineMessage(session.ID, "assistant", finalReply, controller, "final", false))
-			if taskID != "" {
-				_ = writePanelChatSubtask(cfg, taskID, panelChatSubtask{AgentID: controller, Role: "controller", Status: "done", AssignedAt: time.Now().UTC().Format(time.RFC3339), StartedAt: time.Now().UTC().Format(time.RFC3339), FinishedAt: time.Now().UTC().Format(time.RFC3339), InputRef: "spec.md", OutputRef: "result.md", Summary: "主控基于子任务摘要完成汇总"})
-				_ = appendPanelChatTaskEvent(cfg, taskID, panelChatTaskEvent{Time: time.Now().UTC().Format(time.RFC3339), Type: "task_done", AgentID: controller, Message: "主控基于子任务摘要完成汇总"})
-			}
-		}
-		return messages, finalReply, groupSessionIDs, nil
-	}
-	var specialistReport string
-	var writerReport string
-	var reviewerReport string
-	if preferred != controller {
-		preferredTask := userMessage
-		if len(taskBuckets[preferred]) > 0 {
-			preferredTask = joinPanelChatTaskParts(taskBuckets[preferred])
-		}
-		dispatch := fmt.Sprintf("收到，我会先请 %s 从其职责范围判断并处理相关部分，然后由 %s 统一汇总结论。", preferred, controller)
-		messages = append(messages, newPanelChatTimelineMessage(session.ID, "assistant", dispatch, controller, "plan", true))
-		if taskID != "" {
-			_ = writePanelChatSubtask(cfg, taskID, panelChatSubtask{AgentID: preferred, Role: "executor", Status: "running", AssignedAt: time.Now().UTC().Format(time.RFC3339), StartedAt: time.Now().UTC().Format(time.RFC3339), InputRef: "spec.md", Summary: "已分派 coding 专项任务"})
-			_ = appendPanelChatTaskEvent(cfg, taskID, panelChatTaskEvent{Time: time.Now().UTC().Format(time.RFC3339), Type: "subtask_dispatched", AgentID: controller, TargetAgentID: preferred, Message: dispatch})
-		}
-		specialistSessionID := strings.TrimSpace(groupSessionIDs[preferred])
-		if specialistSessionID == "" {
-			specialistSessionID = fmt.Sprintf("%s-%s", session.ID, preferred)
-		}
-		report, actualSessionID, err := runPanelChatMessage(ctx, cfg, panelChatSession{ID: session.ID, AgentID: preferred, OpenClawSessionID: specialistSessionID}, buildPanelChatSpecialistPrompt(session, preferredTask, preferred))
-		if err != nil {
-			return messages, "", groupSessionIDs, err
-		}
-		if strings.TrimSpace(actualSessionID) != "" {
-			groupSessionIDs[preferred] = strings.TrimSpace(actualSessionID)
-		}
-		specialistReport = strings.TrimSpace(report)
-		if specialistReport != "" {
-			messages = append(messages, newPanelChatTimelineMessage(session.ID, "assistant", specialistReport, preferred, "report", true))
-			if taskID != "" {
-				_ = writePanelChatArtifact(cfg, taskID, preferred, specialistReport)
-				_ = writePanelChatSummary(cfg, taskID, preferred, summarizePanelChatArtifact(specialistReport))
-				_ = writePanelChatSubtask(cfg, taskID, panelChatSubtask{AgentID: preferred, Role: "executor", Status: "done", AssignedAt: time.Now().UTC().Format(time.RFC3339), StartedAt: time.Now().UTC().Format(time.RFC3339), FinishedAt: time.Now().UTC().Format(time.RFC3339), InputRef: "spec.md", OutputRef: filepath.Join("artifacts", preferred+".md"), Summary: "专项处理结果已提交"})
-				_ = appendPanelChatTaskEvent(cfg, taskID, panelChatTaskEvent{Time: time.Now().UTC().Format(time.RFC3339), Type: "subtask_done", AgentID: preferred, Message: "专项处理结果已提交"})
-			}
-		}
-	}
-	writerID := ""
-	for _, id := range participants {
-		if id == "writer" {
-			writerID = id
-			break
-		}
-	}
-	if writerID != "" && panelChatNeedsWriter(userMessage) && strings.TrimSpace(writerReport) == "" {
-		writerTask := userMessage
-		if len(taskBuckets[writerID]) > 0 {
-			writerTask = joinPanelChatTaskParts(taskBuckets[writerID])
-		}
-		writerReport = buildPanelChatWriterFallback(writerTask, specialistReport)
-		messages = append(messages, newPanelChatTimelineMessage(session.ID, "assistant", writerReport, writerID, "report", true))
-		if taskID != "" {
-			_ = writePanelChatArtifact(cfg, taskID, writerID, writerReport)
-			_ = writePanelChatSummary(cfg, taskID, writerID, summarizePanelChatArtifact(writerReport))
-			_ = writePanelChatSubtask(cfg, taskID, panelChatSubtask{AgentID: writerID, Role: "writer", Status: "done", AssignedAt: time.Now().UTC().Format(time.RFC3339), StartedAt: time.Now().UTC().Format(time.RFC3339), FinishedAt: time.Now().UTC().Format(time.RFC3339), InputRef: "spec.md", OutputRef: filepath.Join("artifacts", writerID+".md"), Summary: "writer 已生成报告结构成果"})
-			_ = appendPanelChatTaskEvent(cfg, taskID, panelChatTaskEvent{Time: time.Now().UTC().Format(time.RFC3339), Type: "subtask_done", AgentID: writerID, Message: "writer 已生成报告结构成果"})
-		}
-	}
-	reviewerID := ""
-	for _, id := range participants {
-		if id == "reviewer" {
-			reviewerID = id
-			break
-		}
-	}
-	if reviewerID != "" && reviewerID != controller && strings.TrimSpace(specialistReport) != "" {
-		reviewerSessionID := strings.TrimSpace(groupSessionIDs[reviewerID])
-		if reviewerSessionID == "" {
-			reviewerSessionID = fmt.Sprintf("%s-%s", session.ID, reviewerID)
-		}
-		combinedReport := strings.TrimSpace(strings.TrimSpace(summarizePanelChatArtifact(specialistReport)) + "\n\n" + strings.TrimSpace(summarizePanelChatArtifact(writerReport)))
-		review, actualSessionID, err := runPanelChatMessage(ctx, cfg, panelChatSession{ID: session.ID, AgentID: reviewerID, OpenClawSessionID: reviewerSessionID}, buildPanelChatReviewerPrompt(session, userMessage, combinedReport))
-		if err != nil {
-			if strings.Contains(err.Error(), "Unknown agent id") {
-				messages = append(messages, newPanelChatTimelineMessage(session.ID, "assistant", fmt.Sprintf("reviewer 未配置，跳过校验环节，由 %s 直接汇总。", controller), controller, "review", true))
-			} else {
-				return messages, "", groupSessionIDs, err
-			}
-		} else {
-			if strings.TrimSpace(actualSessionID) != "" {
-				groupSessionIDs[reviewerID] = strings.TrimSpace(actualSessionID)
-			}
-			reviewerReport = strings.TrimSpace(review)
-			if reviewerReport != "" {
-				messages = append(messages, newPanelChatTimelineMessage(session.ID, "assistant", reviewerReport, reviewerID, "review", true))
-				if taskID != "" {
-					_ = writePanelChatArtifact(cfg, taskID, reviewerID, reviewerReport)
-					_ = writePanelChatSummary(cfg, taskID, reviewerID, summarizePanelChatArtifact(reviewerReport))
-					_ = writePanelChatSubtask(cfg, taskID, panelChatSubtask{AgentID: reviewerID, Role: "reviewer", Status: "done", AssignedAt: time.Now().UTC().Format(time.RFC3339), StartedAt: time.Now().UTC().Format(time.RFC3339), FinishedAt: time.Now().UTC().Format(time.RFC3339), InputRef: "spec.md", OutputRef: filepath.Join("artifacts", reviewerID+".md"), Summary: "reviewer 已完成复核"})
-					_ = appendPanelChatTaskEvent(cfg, taskID, panelChatTaskEvent{Time: time.Now().UTC().Format(time.RFC3339), Type: "review_done", AgentID: reviewerID, Message: "reviewer 已完成复核"})
-					if panelChatReviewerRequestsRework(reviewerReport) {
-						_ = appendPanelChatTaskEvent(cfg, taskID, panelChatTaskEvent{Time: time.Now().UTC().Format(time.RFC3339), Type: "review_returned", AgentID: reviewerID, Message: "reviewer 建议返工"})
-						if preferred != controller {
-							_ = writePanelChatSubtask(cfg, taskID, panelChatSubtask{AgentID: preferred, Role: "executor", Status: "returned", AssignedAt: time.Now().UTC().Format(time.RFC3339), StartedAt: time.Now().UTC().Format(time.RFC3339), FinishedAt: time.Now().UTC().Format(time.RFC3339), InputRef: "spec.md", OutputRef: filepath.Join("artifacts", preferred+".md"), Summary: "reviewer 建议 coding 返工"})
-						}
-						if writerID != "" && strings.TrimSpace(writerReport) != "" {
-							_ = writePanelChatSubtask(cfg, taskID, panelChatSubtask{AgentID: writerID, Role: "writer", Status: "returned", AssignedAt: time.Now().UTC().Format(time.RFC3339), StartedAt: time.Now().UTC().Format(time.RFC3339), FinishedAt: time.Now().UTC().Format(time.RFC3339), InputRef: "spec.md", OutputRef: filepath.Join("artifacts", writerID+".md"), Summary: "reviewer 建议 writer 返工"})
-						}
-					}
-				}
-			}
-		}
-	}
-	if panelChatReviewerRequestsRework(reviewerReport) {
-		if preferred != controller && strings.TrimSpace(specialistReport) != "" {
-			rework, actualSessionID, err := runPanelChatMessage(ctx, cfg, panelChatSession{ID: session.ID, AgentID: preferred, OpenClawSessionID: groupSessionIDs[preferred]}, buildPanelChatReworkPrompt(session, userMessage, specialistReport, reviewerReport, preferred))
-			if err == nil && strings.TrimSpace(rework) != "" {
-				if strings.TrimSpace(actualSessionID) != "" {
-					groupSessionIDs[preferred] = strings.TrimSpace(actualSessionID)
-				}
-				specialistReport = strings.TrimSpace(rework)
-				messages = append(messages, newPanelChatTimelineMessage(session.ID, "assistant", specialistReport, preferred, "report", true))
-				if taskID != "" {
-					_ = writePanelChatArtifact(cfg, taskID, preferred, specialistReport)
-					_ = writePanelChatSummary(cfg, taskID, preferred, summarizePanelChatArtifact(specialistReport))
-					_ = writePanelChatSubtask(cfg, taskID, panelChatSubtask{AgentID: preferred, Role: "executor", Status: "done", AssignedAt: time.Now().UTC().Format(time.RFC3339), StartedAt: time.Now().UTC().Format(time.RFC3339), FinishedAt: time.Now().UTC().Format(time.RFC3339), InputRef: "spec.md", OutputRef: filepath.Join("artifacts", preferred+".md"), Summary: "coding 已根据 reviewer 意见返工完成"})
-					_ = appendPanelChatTaskEvent(cfg, taskID, panelChatTaskEvent{Time: time.Now().UTC().Format(time.RFC3339), Type: "subtask_redone", AgentID: preferred, Message: "coding 已完成返工"})
-				}
-			}
-		}
-		if writerID != "" && strings.TrimSpace(writerReport) != "" {
-			rework, actualSessionID, err := runPanelChatMessage(ctx, cfg, panelChatSession{ID: session.ID, AgentID: writerID, OpenClawSessionID: groupSessionIDs[writerID]}, buildPanelChatReworkPrompt(session, userMessage, writerReport, reviewerReport, writerID))
-			if err == nil && strings.TrimSpace(rework) != "" {
-				if strings.TrimSpace(actualSessionID) != "" {
-					groupSessionIDs[writerID] = strings.TrimSpace(actualSessionID)
-				}
-				writerReport = strings.TrimSpace(rework)
-				messages = append(messages, newPanelChatTimelineMessage(session.ID, "assistant", writerReport, writerID, "report", true))
-				if taskID != "" {
-					_ = writePanelChatArtifact(cfg, taskID, writerID, writerReport)
-					_ = writePanelChatSummary(cfg, taskID, writerID, summarizePanelChatArtifact(writerReport))
-					_ = writePanelChatSubtask(cfg, taskID, panelChatSubtask{AgentID: writerID, Role: "writer", Status: "done", AssignedAt: time.Now().UTC().Format(time.RFC3339), StartedAt: time.Now().UTC().Format(time.RFC3339), FinishedAt: time.Now().UTC().Format(time.RFC3339), InputRef: "spec.md", OutputRef: filepath.Join("artifacts", writerID+".md"), Summary: "writer 已根据 reviewer 意见返工完成"})
-					_ = appendPanelChatTaskEvent(cfg, taskID, panelChatTaskEvent{Time: time.Now().UTC().Format(time.RFC3339), Type: "subtask_redone", AgentID: writerID, Message: "writer 已完成返工"})
-				}
-			}
-		}
-	}
-	controllerSessionID := strings.TrimSpace(groupSessionIDs[controller])
-	if controllerSessionID == "" {
-		controllerSessionID = session.OpenClawSessionID
-	}
-	if controllerSessionID == "" {
-		controllerSessionID = fmt.Sprintf("%s-%s", session.ID, controller)
-	}
-	combinedReport := strings.TrimSpace(strings.TrimSpace(summarizePanelChatArtifact(specialistReport)) + "\n\n" + strings.TrimSpace(summarizePanelChatArtifact(writerReport)))
-	finalReply, actualSessionID, err := runPanelChatMessage(ctx, cfg, panelChatSession{ID: session.ID, AgentID: controller, OpenClawSessionID: controllerSessionID}, buildPanelChatControllerPromptWithReview(session, userMessage, preferred, combinedReport, summarizePanelChatArtifact(reviewerReport)))
-	if err != nil {
-		return messages, "", groupSessionIDs, err
-	}
-	if strings.TrimSpace(actualSessionID) != "" {
-		groupSessionIDs[controller] = strings.TrimSpace(actualSessionID)
-	}
-	finalReply = strings.TrimSpace(finalReply)
-	if finalReply != "" {
-		messages = append(messages, newPanelChatTimelineMessage(session.ID, "assistant", finalReply, controller, "final", false))
-		if taskID != "" {
-			_ = writePanelChatSubtask(cfg, taskID, panelChatSubtask{AgentID: controller, Role: "controller", Status: "done", AssignedAt: time.Now().UTC().Format(time.RFC3339), StartedAt: time.Now().UTC().Format(time.RFC3339), FinishedAt: time.Now().UTC().Format(time.RFC3339), InputRef: "spec.md", OutputRef: "result.md", Summary: "主控智能体已完成最终汇总"})
-			_ = appendPanelChatTaskEvent(cfg, taskID, panelChatTaskEvent{Time: time.Now().UTC().Format(time.RFC3339), Type: "task_done", AgentID: controller, Message: "主控智能体已完成最终汇总"})
-		}
-	}
-	return messages, finalReply, groupSessionIDs, nil
-}
-
-func ListPanelChatSessions(cfg *config.Config) gin.HandlerFunc {
+func ListPanelChatSessions(db *sql.DB, cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		sessions, err := loadPanelChatSessions(cfg)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
 			return
 		}
+		for i := range sessions {
+			decoratePanelChatSession(db, cfg, &sessions[i])
+		}
 		sortPanelChatSessions(sessions)
 		c.JSON(http.StatusOK, gin.H{"ok": true, "sessions": sessions})
 	}
 }
 
-func CreatePanelChatSession(cfg *config.Config) gin.HandlerFunc {
+func CreatePanelChatSession(db *sql.DB, cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req struct {
-			Title               string   `json:"title"`
-			ChatType            string   `json:"chatType"`
-			AgentID             string   `json:"agentId"`
-			ParticipantAgentIDs []string `json:"participantAgentIds"`
-			ControllerAgentID   string   `json:"controllerAgentId"`
-			PreferredAgentID    string   `json:"preferredAgentId"`
-			TargetID            string   `json:"targetId"`
-			TargetName          string   `json:"targetName"`
+			Title          string   `json:"title"`
+			ChatType       string   `json:"chatType"`
+			AgentID        string   `json:"agentId"`
+			AgentIDs       []string `json:"agentIds"`
+			SummaryAgentID string   `json:"summaryAgentId"`
+			TargetID       string   `json:"targetId"`
+			TargetName     string   `json:"targetName"`
 		}
 		_ = c.ShouldBindJSON(&req)
 
@@ -1650,43 +1082,32 @@ func CreatePanelChatSession(cfg *config.Config) gin.HandlerFunc {
 		if agentID == "" {
 			agentID = loadDefaultAgentID(cfg)
 		}
+		participants := normalizePanelChatParticipantInput(req.AgentIDs, agentID, req.SummaryAgentID)
 		chatType := normalizePanelChatType(req.ChatType)
-		participantAgentIDs := normalizePanelChatAgentIDs(req.ParticipantAgentIDs)
-		controllerAgentID := strings.TrimSpace(req.ControllerAgentID)
-		preferredAgentID := strings.TrimSpace(req.PreferredAgentID)
-		if chatType == "group" {
-			if controllerAgentID == "" {
-				controllerAgentID = "main"
-			}
-			if !containsPanelChatAgent(participantAgentIDs, controllerAgentID) {
-				participantAgentIDs = append([]string{controllerAgentID}, participantAgentIDs...)
-				participantAgentIDs = normalizePanelChatAgentIDs(participantAgentIDs)
-			}
-			if len(participantAgentIDs) == 0 {
-				participantAgentIDs = []string{"main"}
-			}
-			if preferredAgentID == "" || !containsPanelChatAgent(participantAgentIDs, preferredAgentID) {
-				preferredAgentID = controllerAgentID
-			}
-			agentID = controllerAgentID
+		if len(participants) > 1 || strings.TrimSpace(req.SummaryAgentID) != "" {
+			chatType = "group"
+		}
+		if chatType == "group" && len(participants) < 2 {
+			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "group chat requires at least 2 AI participants"})
+			return
 		}
 		now := time.Now().UnixMilli()
 		id := fmt.Sprintf("panel-%d", now)
+		if chatType == "group" {
+			id = fmt.Sprintf("group-%d", now)
+		}
 		session := panelChatSession{
-			ID:                   id,
-			OpenClawSessionID:    id,
-			AgentID:              agentID,
-			ChatType:             chatType,
-			ParticipantAgentIDs:  participantAgentIDs,
-			ControllerAgentID:    controllerAgentID,
-			PreferredAgentID:     preferredAgentID,
-			GroupAgentSessionIDs: map[string]string{},
-			Status:               "idle",
-			Title:                buildPanelChatTitle(req.Title),
-			TargetID:             strings.TrimSpace(req.TargetID),
-			TargetName:           strings.TrimSpace(req.TargetName),
-			CreatedAt:            now,
-			UpdatedAt:            now,
+			ID:                id,
+			OpenClawSessionID: id,
+			AgentID:           agentID,
+			ChatType:          chatType,
+			Title:             buildPanelChatTitle(req.Title),
+			TargetID:          strings.TrimSpace(req.TargetID),
+			TargetName:        strings.TrimSpace(req.TargetName),
+			SummaryAgentID:    strings.TrimSpace(req.SummaryAgentID),
+			ParticipantCount:  len(participants),
+			CreatedAt:         now,
+			UpdatedAt:         now,
 		}
 
 		sessions, err := loadPanelChatSessions(cfg)
@@ -1700,11 +1121,16 @@ func CreatePanelChatSession(cfg *config.Config) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
 			return
 		}
+		if err := model.ReplacePanelChatParticipants(db, session.ID, participants); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+		decoratePanelChatSession(db, cfg, &session)
 		c.JSON(http.StatusOK, gin.H{"ok": true, "session": session})
 	}
 }
 
-func GetPanelChatSessionDetail(cfg *config.Config) gin.HandlerFunc {
+func GetPanelChatSessionDetail(db *sql.DB, cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		sessions, err := loadPanelChatSessions(cfg)
 		if err != nil {
@@ -1721,7 +1147,13 @@ func GetPanelChatSessionDetail(cfg *config.Config) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"ok": true, "session": session, "messages": messages})
+		participants, err := loadPanelChatParticipants(db, cfg, *session)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+		decoratePanelChatSession(db, cfg, session)
+		c.JSON(http.StatusOK, gin.H{"ok": true, "session": session, "messages": messages, "participants": participants})
 	}
 }
 
@@ -1747,11 +1179,10 @@ func RenamePanelChatSession(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
-func SendPanelChatMessage(cfg *config.Config) gin.HandlerFunc {
+func SendPanelChatMessage(db *sql.DB, cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req struct {
-			Message          string `json:"message"`
-			PreferredAgentID string `json:"preferredAgentId"`
+			Message string `json:"message"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Message) == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "message required"})
@@ -1774,99 +1205,56 @@ func SendPanelChatMessage(cfg *config.Config) gin.HandlerFunc {
 		}
 		if _, err := updatePanelChatSessionState(cfg, session.ID, func(item *panelChatSession) {
 			item.Processing = true
-			if item.ChatType == "group" {
-				item.Status = "dispatching"
-			}
+			item.CurrentAgentID = ""
+			item.CurrentAgentName = ""
 			item.UpdatedAt = time.Now().UnixMilli()
 			item.LastMessage = strings.TrimSpace(req.Message)
-			if strings.TrimSpace(req.PreferredAgentID) != "" {
-				item.PreferredAgentID = strings.TrimSpace(req.PreferredAgentID)
-			}
 		}); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
 			return
 		}
 
-		var (
-			reply           string
-			actualSessionID string
-			runErr          error
-			messages        []map[string]interface{}
-			groupSessionIDs map[string]string
-			taskID          string
-		)
-		if session.ChatType == "group" {
-			taskID, err = createPanelChatTask(cfg, *session, strings.TrimSpace(req.Message))
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
-				return
-			}
-			messages, reply, groupSessionIDs, runErr = runPanelChatGroupWorkflow(c.Request.Context(), cfg, *session, taskID, strings.TrimSpace(req.Message), strings.TrimSpace(req.PreferredAgentID))
+		participants, err := loadPanelChatParticipants(db, cfg, *session)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+		existingMessages, readErr := loadPanelChatMessages(cfg, session.ID)
+		if readErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": readErr.Error()})
+			return
+		}
+		reply := ""
+		actualSessionID := ""
+		var runErr error
+		if session.ChatType == "group" || len(participants) > 1 {
+			existingMessages, reply, runErr = executeGroupPanelChat(c.Request.Context(), db, cfg, *session, participants, existingMessages, strings.TrimSpace(req.Message))
 		} else {
 			reply, actualSessionID, runErr = runPanelChatMessage(c.Request.Context(), cfg, *session, strings.TrimSpace(req.Message))
+			if strings.TrimSpace(actualSessionID) != "" {
+				session.OpenClawSessionID = strings.TrimSpace(actualSessionID)
+			}
 		}
 		_, _ = updatePanelChatSessionState(cfg, session.ID, func(item *panelChatSession) {
 			item.Processing = false
-			if item.ChatType == "group" {
-				item.Status = "done"
-			} else {
-				item.Status = "idle"
-			}
+			item.CurrentAgentID = ""
+			item.CurrentAgentName = ""
 			if strings.TrimSpace(actualSessionID) != "" {
 				item.OpenClawSessionID = strings.TrimSpace(actualSessionID)
 			}
-			if len(groupSessionIDs) > 0 {
-				item.GroupAgentSessionIDs = groupSessionIDs
-			}
-			if strings.TrimSpace(req.PreferredAgentID) != "" {
-				item.PreferredAgentID = strings.TrimSpace(req.PreferredAgentID)
-			}
 		})
-		timedOut := false
 		if runErr != nil {
-			if taskID != "" {
-				meta := panelChatTaskMeta{
-					ID:                  taskID,
-					SessionID:           session.ID,
-					ChatType:            session.ChatType,
-					ControllerAgentID:   session.ControllerAgentID,
-					PreferredAgentID:    session.PreferredAgentID,
-					ParticipantAgentIDs: append([]string{}, session.ParticipantAgentIDs...),
-					Title:               buildPanelChatTitle(req.Message),
-					Status:              "failed",
-					CurrentStage:        "failed",
-					CreatedAt:           time.Now().UTC().Format(time.RFC3339),
-					UpdatedAt:           time.Now().UTC().Format(time.RFC3339),
-				}
-				_ = writePanelChatTaskMeta(cfg, taskID, meta)
-				_ = appendPanelChatTaskEvent(cfg, taskID, panelChatTaskEvent{Time: time.Now().UTC().Format(time.RFC3339), Type: "task_failed", AgentID: session.ControllerAgentID, Message: runErr.Error()})
-				_ = writePanelChatTaskFailure(cfg, taskID, runErr.Error())
-			}
 			if errors.Is(runErr, errPanelChatCanceled) {
 				c.JSON(http.StatusOK, gin.H{"ok": false, "canceled": true})
 				return
 			}
-			if errors.Is(runErr, errPanelChatTimeout) {
-				timedOut = true
-			} else {
+			if !errors.Is(runErr, errPanelChatTimeout) {
 				c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": runErr.Error()})
 				return
 			}
 		}
-		if session.ChatType == "group" {
-			if err := savePanelChatGroupMessages(cfg, session.ID, messages); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
-				return
-			}
-		} else {
-			existingMessages, readErr := loadPanelChatDirectMessages(cfg, session.ID)
-			if readErr != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": readErr.Error()})
-				return
-			}
-			if strings.TrimSpace(actualSessionID) != "" {
-				session.OpenClawSessionID = strings.TrimSpace(actualSessionID)
-			}
+
+		if session.ChatType != "group" && len(participants) <= 1 {
 			rawMessages, historyErr := readSessionMessages(panelChatRuntimeSessionFile(cfg, *session), 400)
 			if historyErr == nil {
 				latestExchange := extractLatestPanelChatExchange(rawMessages, strings.TrimSpace(req.Message))
@@ -1874,55 +1262,27 @@ func SendPanelChatMessage(cfg *config.Config) gin.HandlerFunc {
 					existingMessages = mergePanelChatTranscripts(existingMessages, latestExchange)
 				}
 			}
-			if len(existingMessages) == 0 && strings.TrimSpace(reply) != "" {
-				userTime := time.Now().UTC()
-				assistantTime := userTime.Add(1200 * time.Millisecond)
-				existingMessages = append(existingMessages,
-					map[string]interface{}{"id": fmt.Sprintf("user-%d", time.Now().UnixNano()), "role": "user", "content": strings.TrimSpace(req.Message), "timestamp": userTime.Format(time.RFC3339)},
-					map[string]interface{}{"id": fmt.Sprintf("assistant-%d", time.Now().UnixNano()+1), "role": "assistant", "content": strings.TrimSpace(reply), "timestamp": assistantTime.Format(time.RFC3339)},
-				)
-			}
-			if err := savePanelChatDirectMessages(cfg, session.ID, existingMessages); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
-				return
-			}
-			messages = existingMessages
 		}
-
-		reply = panelChatEffectiveReply(messages, reply)
-		if taskID != "" && !timedOut {
-			meta := panelChatTaskMeta{
-				ID:                  taskID,
-				SessionID:           session.ID,
-				ChatType:            session.ChatType,
-				ControllerAgentID:   session.ControllerAgentID,
-				PreferredAgentID:    session.PreferredAgentID,
-				ParticipantAgentIDs: append([]string{}, session.ParticipantAgentIDs...),
-				Title:               buildPanelChatTitle(req.Message),
-				Status:              "done",
-				CurrentStage:        "final",
-				CreatedAt:           time.Now().UTC().Format(time.RFC3339),
-				UpdatedAt:           time.Now().UTC().Format(time.RFC3339),
-			}
-			_ = writePanelChatTaskMeta(cfg, taskID, meta)
-			if strings.TrimSpace(reply) != "" && !strings.Contains(strings.ToLower(reply), "timed out") && !strings.Contains(strings.ToLower(reply), "connection error") {
-				_ = writePanelChatTaskResult(cfg, taskID, reply)
-			}
-		}
-		if len(messages) == 0 && strings.TrimSpace(reply) != "" {
+		if len(existingMessages) == 0 && strings.TrimSpace(reply) != "" {
 			userTime := time.Now().UTC()
 			assistantTime := userTime.Add(1200 * time.Millisecond)
-			messages = append(messages,
-				map[string]interface{}{"id": fmt.Sprintf("user-%d", time.Now().UnixNano()), "role": "user", "content": strings.TrimSpace(req.Message), "timestamp": userTime.Format(time.RFC3339)},
-				map[string]interface{}{"id": fmt.Sprintf("assistant-%d", time.Now().UnixNano()+1), "role": "assistant", "content": strings.TrimSpace(reply), "timestamp": assistantTime.Format(time.RFC3339)},
+			existingMessages = append(existingMessages,
+				map[string]interface{}{"id": fmt.Sprintf("user-%d", time.Now().UnixNano()), "role": "user", "senderType": "user", "messageType": "chat", "content": strings.TrimSpace(req.Message), "timestamp": userTime.Format(time.RFC3339)},
+				map[string]interface{}{"id": fmt.Sprintf("assistant-%d", time.Now().UnixNano()+1), "role": "assistant", "senderType": "agent", "agentId": session.AgentID, "messageType": "chat", "content": strings.TrimSpace(reply), "timestamp": assistantTime.Format(time.RFC3339)},
 			)
 		}
+		if err := savePanelChatMessages(cfg, session.ID, existingMessages); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
+			return
+		}
+
+		reply = panelChatEffectiveReply(existingMessages, reply)
 		updated, err := updatePanelChatSessionState(cfg, session.ID, func(item *panelChatSession) {
 			item.UpdatedAt = time.Now().UnixMilli()
 			item.Processing = false
-			item.MessageCount = len(messages)
+			item.MessageCount = len(existingMessages)
 			item.LastMessage = strings.TrimSpace(req.Message)
-			if item.Title == panelChatDefaultTitle && len(messages) > 0 {
+			if item.Title == panelChatDefaultTitle && len(existingMessages) > 0 {
 				item.Title = buildPanelChatTitle(req.Message)
 			}
 		})
@@ -1930,18 +1290,21 @@ func SendPanelChatMessage(cfg *config.Config) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
 			return
 		}
+		decoratePanelChatSession(db, cfg, updated)
+		participants, _ = loadPanelChatParticipants(db, cfg, *updated)
 
 		c.JSON(http.StatusOK, gin.H{
-			"ok":         true,
-			"reply":      reply,
-			"session":    updated,
-			"messages":   messages,
-			"processing": timedOut,
+			"ok":           true,
+			"reply":        reply,
+			"session":      updated,
+			"messages":     existingMessages,
+			"participants": participants,
+			"processing":   errors.Is(runErr, errPanelChatTimeout),
 		})
 	}
 }
 
-func DeletePanelChatSession(cfg *config.Config) gin.HandlerFunc {
+func DeletePanelChatSession(db *sql.DB, cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		sessions, err := loadPanelChatSessions(cfg)
 		if err != nil {
@@ -1958,12 +1321,10 @@ func DeletePanelChatSession(cfg *config.Config) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"ok": false, "error": err.Error()})
 			return
 		}
-		if session.ChatType == "group" {
-			_ = os.Remove(panelChatGroupMessagesPath(cfg, session.ID))
-		} else {
-			_ = os.Remove(panelChatDirectMessagesPath(cfg, session.ID))
-			_ = os.Remove(panelChatSessionFile(cfg, session.AgentID, session.OpenClawSessionID))
-		}
+		_ = model.DeletePanelChatParticipants(db, session.ID)
+		_ = os.Remove(panelChatMessagesPath(cfg, session.ID))
+		_ = os.Remove(panelChatSessionFile(cfg, session.AgentID, session.OpenClawSessionID))
+		_ = os.RemoveAll(panelChatRuntimeRoot(cfg, session.ID))
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	}
 }

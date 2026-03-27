@@ -1,6 +1,6 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { Bot, Check, ChevronDown, ChevronUp, Copy, Loader2, MessageSquarePlus, Send, Square, Trash2, User, Users } from 'lucide-react';
+import { Bot, Check, Copy, Loader2, MessageSquarePlus, Send, Square, Trash2, User, Users } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '../lib/api';
@@ -11,39 +11,32 @@ type PanelChatSession = {
   openclawSessionId: string;
   agentId: string;
   chatType: 'direct' | 'group';
-  participantAgentIds?: string[];
-  controllerAgentId?: string;
-  status?: 'idle' | 'dispatching' | 'running' | 'reviewing' | 'done';
   title: string;
   targetId?: string;
   targetName?: string;
   createdAt: number;
   updatedAt: number;
   processing?: boolean;
+  currentAgentId?: string;
+  currentAgentName?: string;
+  summaryAgentId?: string;
   messageCount: number;
   lastMessage?: string;
+  participantCount?: number;
 };
 
 type PanelChatMessage = {
   id: string;
   role: string;
+  senderType?: 'user' | 'agent' | 'system';
+  agentId?: string;
+  agentName?: string;
+  messageType?: 'chat' | 'summary' | 'system_notice';
   content: string;
   timestamp: string;
   sessionId?: string;
   images?: { src: string; mimeType?: string }[];
-  agentId?: string;
-  kind?: 'user' | 'discussion' | 'host' | 'summary' | 'system';
 };
-
-type GroupSessionDraft = {
-  open: boolean;
-  title: string;
-  agentIds: string[];
-};
-
-type ChatMode = 'direct' | 'group';
-
-type GroupMessageView = 'all' | 'internal' | 'final';
 
 type AgentOption = {
   id: string;
@@ -51,46 +44,18 @@ type AgentOption = {
   isDefault?: boolean;
 };
 
+type SessionParticipant = {
+  agentId: string;
+  name?: string;
+  roleType?: string;
+  orderIndex?: number;
+  autoReply?: boolean;
+  enabled?: boolean;
+  isSummary?: boolean;
+};
+
 function normalizeUserMessageContent(content: string) {
   return content.replace(/^\[[^\]]+\]\s*/, '').trim();
-}
-
-function isDiagramLine(line: string) {
-  const trimmed = line.trim();
-  if (!trimmed) return false;
-  if (/^#{1,6}\s/.test(trimmed)) return false;
-  if (/^[*-]\s/.test(trimmed)) return false;
-  if (/[┌┐└┘├┤┬┴┼│─]/.test(trimmed)) return true;
-  return false;
-}
-
-function formatDiagramBlocks(content: string) {
-  const lines = content.split('\n');
-  const out: string[] = [];
-  let buffer: string[] = [];
-
-  const flush = () => {
-    if (buffer.length === 0) return;
-    if (buffer.length >= 2) {
-      out.push('```text');
-      out.push(...buffer);
-      out.push('```');
-    } else {
-      out.push(...buffer);
-    }
-    buffer = [];
-  };
-
-  for (const line of lines) {
-    if (isDiagramLine(line)) {
-      buffer.push(line);
-      continue;
-    }
-    flush();
-    out.push(line);
-  }
-  flush();
-  return out.join('\n');
 }
 
 function agentBadgeTone(agentId: string) {
@@ -118,23 +83,10 @@ function agentDisplayName(agent: AgentOption | null | undefined) {
   return agent.name ? `${agent.name} (${agent.id})` : agent.id;
 }
 
-function statusLabel(status: PanelChatSession['status'], locale: string) {
-  if (locale === 'en') {
-    switch (status) {
-      case 'dispatching': return 'Dispatching';
-      case 'running': return 'Running';
-      case 'reviewing': return 'Reviewing';
-      case 'done': return 'Done';
-      default: return 'Idle';
-    }
-  }
-  switch (status) {
-    case 'dispatching': return '分派中';
-    case 'running': return '执行中';
-    case 'reviewing': return '校验中';
-    case 'done': return '已完成';
-    default: return '空闲';
-  }
+function sessionBadgeTone(chatType: 'direct' | 'group') {
+  return chatType === 'group'
+    ? 'border border-emerald-200 bg-emerald-100 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/15 dark:text-emerald-200'
+    : 'border border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200';
 }
 
 export default function PanelChat() {
@@ -142,15 +94,14 @@ export default function PanelChat() {
   const { locale } = useI18n();
   const modern = uiMode === 'modern';
   const [sessions, setSessions] = useState<PanelChatSession[]>([]);
-  const [chatMode, setChatMode] = useState<ChatMode>('direct');
   const [selectedId, setSelectedId] = useState('');
   const [messages, setMessages] = useState<PanelChatMessage[]>([]);
-  const [groupSessions, setGroupSessions] = useState<PanelChatSession[]>([]);
   const [agents, setAgents] = useState<AgentOption[]>([]);
+  const [draftMode, setDraftMode] = useState<'direct' | 'group'>('direct');
   const [selectedAgentId, setSelectedAgentId] = useState('main');
-  const [groupDraft, setGroupDraft] = useState<GroupSessionDraft>({ open: false, title: '', agentIds: ['main'] });
-  const [showGroupTaskCard, setShowGroupTaskCard] = useState(true);
-  const [groupMessageView, setGroupMessageView] = useState<GroupMessageView>('all');
+  const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>([]);
+  const [summaryAgentId, setSummaryAgentId] = useState('');
+  const [participants, setParticipants] = useState<SessionParticipant[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [processingSessionId, setProcessingSessionId] = useState('');
@@ -166,7 +117,6 @@ export default function PanelChat() {
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const previousAssistantRef = useRef('');
   const selectedIdRef = useRef('');
-  const detailRequestIdRef = useRef(0);
   const abortControllerRef = useRef<AbortController | null>(null);
   const abortMarkerHandledRef = useRef<Record<string, boolean>>({});
   const activeRequestIdRef = useRef(0);
@@ -175,32 +125,29 @@ export default function PanelChat() {
     if (locale === 'en') {
       return {
         title: 'Panel Chat',
-        subtitle: 'Talk to local OpenClaw directly in the panel, with single-agent and multi-agent collaboration modes.',
-        direct: 'Direct chat',
-        group: 'Group chat',
+        subtitle: 'Talk to the local OpenClaw agent directly in the panel.',
         newChat: 'New chat',
         emptyTitle: 'Start a local OpenClaw conversation',
         emptyDesc: 'Configure a model first, then chat with OpenClaw here directly.',
         hint: 'OpenClaw can use local files, workspace context, and installed skills here just like its native local mode.',
         input: 'Ask OpenClaw to analyze files, edit code, or use installed skills...',
-        groupInput: 'Message the group. Main agent will coordinate the final answer.',
         agentLabel: 'Agent',
         agentForNewChat: 'Agent for new chat',
+        groupAgents: 'Agents in group chat',
+        summaryAgent: 'Summary AI',
+        minGroupAgents: 'Select at least 2 AI roles for group chat.',
+        groupMode: 'Multi-AI sequence',
+        directMode: 'Single AI',
+        modeSingle: 'Single chat',
+        modeGroup: 'Group chat',
+        newDirectChat: 'New single chat',
+        newGroupChat: 'New group chat',
+        participants: 'Participants',
+        replyingNow: 'Replying now',
         defaultAgentSuffix: 'default',
-        openWithAgent: 'New session with this agent',
-        createGroupTitle: 'Create group session',
-        groupParticipantHint: 'Select agents that can join this collaboration session.',
-        createGroupConfirm: 'Create group chat',
-        taskCard: 'Group overview',
-        showTaskCard: 'Show overview',
-        hideTaskCard: 'Hide overview',
-        viewAll: 'All',
-        viewInternal: 'Internal',
-        viewFinal: 'Final',
         sending: 'Sending...',
         stop: 'Stop',
         processing: 'OpenClaw is thinking...',
-        processingHint: '',
         send: 'Send',
         delete: 'Delete',
         rename: 'Rename',
@@ -222,32 +169,29 @@ export default function PanelChat() {
     }
     return {
       title: '面板聊天',
-      subtitle: '直接在面板里和本地 OpenClaw 交互，并支持多智能体协作。',
-      direct: '单聊',
-      group: '群聊',
+      subtitle: '直接在面板里和本地 OpenClaw 交互。',
       newChat: '新建会话',
       emptyTitle: '开始一段本地 OpenClaw 对话',
-      emptyDesc: '先在系统配置里配好模型，然后就可以在这里与OpenClaw直接聊天。',
+      emptyDesc: '先在系统配置里配好模型，然后就可以在这里与 OpenClaw 直接聊天。',
       hint: '这里会直接调用本地 OpenClaw，能继续使用它已安装的技能、工作区上下文和本地文件能力。',
       input: '给 OpenClaw 发消息，比如让它分析文件、修改代码或调用已安装技能...',
-      groupInput: '输入群聊任务，最终由主智能体统一汇总回复。',
       agentLabel: '智能体',
       agentForNewChat: '新会话使用智能体',
+      groupAgents: '群聊参与 AI',
+      summaryAgent: '总结 AI',
+      minGroupAgents: '群聊至少选择 2 个 AI 角色。',
+      groupMode: '多 AI 顺序回复',
+      directMode: '单 AI 对话',
+      modeSingle: '单聊',
+      modeGroup: '群聊',
+      newDirectChat: '新建单聊',
+      newGroupChat: '新建群聊',
+      participants: '参与角色',
+      replyingNow: '当前回复',
       defaultAgentSuffix: '默认',
-      openWithAgent: '以该智能体另开新会话',
-      createGroupTitle: '新建群聊会话',
-      groupParticipantHint: '选择要参与本次协作的智能体，main 将默认作为主控。',
-      createGroupConfirm: '创建群聊',
-      taskCard: '群聊概览',
-      showTaskCard: '显示概览',
-      hideTaskCard: '隐藏概览',
-      viewAll: '全部',
-      viewInternal: '内部协作',
-      viewFinal: '最终结论',
       sending: '发送中...',
       stop: '中止',
       processing: 'OpenClaw 思考中...',
-      processingHint: '',
       send: '发送',
       delete: '删除',
       rename: '重命名',
@@ -268,57 +212,21 @@ export default function PanelChat() {
     };
   }, [locale]);
 
-  const directSessions = useMemo(() => {
-    if (!selectedAgentId) return sessions.filter(item => item.chatType === 'direct');
-    return sessions.filter(item => item.chatType === 'direct' && item.agentId === selectedAgentId);
-  }, [selectedAgentId, sessions]);
-  const displayedSessions = chatMode === 'group' ? groupSessions : directSessions;
-  const selectedSession = displayedSessions.find(item => item.id === selectedId) || null;
-  const liveMessages = messages;
+  const selectedSession = sessions.find(item => item.id === selectedId) || null;
   const processing = (!!selectedId && processingSessionId === selectedId) || !!selectedSession?.processing;
   const interactionLocked = loading || !!processingSessionId || creating;
-  const sessionSwitchLocked = creating;
-  const selectedAgentMeta = useMemo(() => agents.find(item => item.id === selectedSession?.agentId) || null, [agents, selectedSession?.agentId]);
-  const selectedDraftAgentMeta = useMemo(() => agents.find(item => item.id === selectedAgentId) || null, [agents, selectedAgentId]);
+  const currentRespondingAgent = selectedSession?.currentAgentName || selectedSession?.currentAgentId || '';
+  const isGroupDraft = draftMode === 'group';
+  const visibleSessions = useMemo(() => sessions.filter(session => draftMode === 'group' ? session.chatType === 'group' : session.chatType !== 'group'), [draftMode, sessions]);
   const timelineMessages = useMemo(() => {
-    const pending = pendingUserMessage && pendingUserMessage.sessionId === selectedId && !liveMessages.some(item => item.role === 'user' && normalizeUserMessageContent(item.content) === normalizeUserMessageContent(pendingUserMessage.content)) ? [pendingUserMessage] : [];
-    return [...liveMessages, ...(abortedMarkers[selectedId] || []), ...pending].sort((a, b) => {
+    const pending = pendingUserMessage && pendingUserMessage.sessionId === selectedId && !messages.some(item => item.role === 'user' && normalizeUserMessageContent(item.content) === normalizeUserMessageContent(pendingUserMessage.content)) ? [pendingUserMessage] : [];
+    return [...messages, ...(abortedMarkers[selectedId] || []), ...pending].sort((a, b) => {
       const ta = new Date(a.timestamp).getTime();
       const tb = new Date(b.timestamp).getTime();
-      if (ta === tb) {
-        const order = (role?: string) => {
-          switch (role) {
-            case 'user': return 0;
-            case 'assistant': return 1;
-            case 'system': return 2;
-            default: return 3;
-          }
-        };
-        const diff = order(a.role) - order(b.role);
-        if (diff !== 0) return diff;
-        return a.id.localeCompare(b.id);
-      }
+      if (ta === tb) return a.id.localeCompare(b.id);
       return ta - tb;
     });
-  }, [abortedMarkers, liveMessages, pendingUserMessage, selectedId]);
-
-  const filteredTimelineMessages = useMemo(() => {
-    if (chatMode !== 'group') return timelineMessages;
-    switch (groupMessageView) {
-      case 'internal':
-        return timelineMessages.filter(item => item.kind === 'discussion' || item.role === 'system');
-      case 'final':
-        return timelineMessages.filter(item => item.kind === 'user' || item.kind === 'summary');
-      default:
-        return timelineMessages;
-    }
-  }, [chatMode, groupMessageView, timelineMessages]);
-
-  const latestGroupUserTask = useMemo(() => {
-    if (chatMode !== 'group') return '';
-    const latestUser = [...timelineMessages].reverse().find(item => item.role === 'user');
-    return latestUser?.content || '';
-  }, [chatMode, timelineMessages]);
+  }, [abortedMarkers, messages, pendingUserMessage, selectedId]);
 
   useEffect(() => {
     selectedIdRef.current = selectedId;
@@ -329,38 +237,14 @@ export default function PanelChat() {
   }, [selectedSession?.id, selectedSession?.title]);
 
   useEffect(() => {
-    if (!selectedSession) {
-      setRenaming(false);
-    }
+    if (!selectedSession) setRenaming(false);
   }, [selectedSession]);
 
   useEffect(() => {
-    if (chatMode !== 'direct') return;
-    if (selectedSession?.agentId) {
-      setSelectedAgentId(selectedSession.agentId);
-    }
-  }, [chatMode, selectedSession?.agentId]);
-
-  useEffect(() => {
-    if (chatMode !== 'direct') return;
-    if (!selectedAgentId) return;
-    if (selectedId && directSessions.some(item => item.id === selectedId)) return;
-    setSelectedId(directSessions[0]?.id || '');
-  }, [chatMode, directSessions, selectedAgentId, selectedId]);
-
-  useEffect(() => {
-    if (chatMode !== 'group') return;
-    if (selectedId && groupSessions.some(item => item.id === selectedId)) return;
-    setSelectedId(groupSessions[0]?.id || '');
-  }, [chatMode, groupSessions, selectedId]);
-
-  useEffect(() => {
     if (!pendingUserMessage || pendingUserMessage.sessionId !== selectedId) return;
-    const matched = liveMessages.some(item => item.role === 'user' && normalizeUserMessageContent(item.content) === normalizeUserMessageContent(pendingUserMessage.content));
-    if (matched) {
-      setPendingUserMessage(null);
-    }
-  }, [liveMessages, pendingUserMessage, selectedId]);
+    const matched = messages.some(item => item.role === 'user' && normalizeUserMessageContent(item.content) === normalizeUserMessageContent(pendingUserMessage.content));
+    if (matched) setPendingUserMessage(null);
+  }, [messages, pendingUserMessage, selectedId]);
 
   const loadSessions = useCallback(async (preferredId?: string) => {
     const res = await api.getPanelChatSessions();
@@ -378,86 +262,88 @@ export default function PanelChat() {
     });
   }, [text.failedLoad]);
 
-  const loadGroupSessions = useCallback(async (preferredId?: string) => {
-    const res = await api.getGroupChatSessions();
-    if (!res?.ok) {
-      setErrorText(text.failedLoad);
-      return;
-    }
-    const next = Array.isArray(res.sessions) ? res.sessions : [];
-    setErrorText('');
-    setGroupSessions(next);
-    setSelectedId(current => {
-      if (preferredId && next.some((item: PanelChatSession) => item.id === preferredId)) return preferredId;
-      if (current && next.some((item: PanelChatSession) => item.id === current)) return current;
-      return next[0]?.id || '';
-    });
-  }, [text.failedLoad]);
-
   const loadAgents = useCallback(async () => {
     try {
       const res = await api.getAgentsConfig();
       const list = Array.isArray(res?.agents?.list) ? res.agents.list : [];
-      const defaultAgent = typeof res?.agents?.default === 'string' ? String(res.agents.default).trim() : '';
-      const normalized = list.map((item: any) => ({ id: String(item?.id || '').trim(), name: String(item?.name || '').trim(), isDefault: String(item?.id || '').trim() === defaultAgent || !!item?.default })).filter((item: AgentOption) => item.id);
+      const normalized = list
+        .map((item: any) => ({ id: String(item?.id || '').trim(), name: String(item?.name || '').trim(), isDefault: !!item?.default }))
+        .filter((item: AgentOption) => item.id);
       setAgents(normalized);
-      setSelectedAgentId(current => current || defaultAgent || normalized[0]?.id || 'main');
-      setGroupDraft(current => ({ ...current, agentIds: current.agentIds.length > 0 ? current.agentIds : [defaultAgent || normalized[0]?.id || 'main'] }));
+      const preferred = normalized.find((item: AgentOption) => item.isDefault)?.id || normalized[0]?.id || 'main';
+      setSelectedAgentId(current => current || preferred);
+      setSelectedAgentIds(current => current.length > 0 ? current : [preferred]);
+      setSummaryAgentId(current => current || preferred);
+      if (!selectedAgentId) setSelectedAgentId(preferred);
     } catch {
-      const fallback = [{ id: 'main' }, { id: 'planner' }, { id: 'coder' }, { id: 'reviewer' }];
-      setAgents(fallback);
-      setSelectedAgentId(current => current || fallback[0].id);
-      setGroupDraft(current => ({ ...current, agentIds: current.agentIds.length > 0 ? current.agentIds : [fallback[0].id] }));
+      setAgents([{ id: 'main', isDefault: true }]);
+      setSelectedAgentIds(current => current.length > 0 ? current : ['main']);
+      setSummaryAgentId(current => current || 'main');
+      if (!selectedAgentId) setSelectedAgentId('main');
     }
-  }, []);
+  }, [selectedAgentId]);
 
   const loadDetail = useCallback(async (id: string) => {
-    const requestId = detailRequestIdRef.current + 1;
-    detailRequestIdRef.current = requestId;
     if (!id) {
       setMessages([]);
-      setPendingUserMessage(null);
+      setParticipants([]);
       return;
     }
-    setMessages([]);
-    setPendingUserMessage(null);
-    const isGroupSession = id.startsWith('group-') || chatMode === 'group';
-    const res = isGroupSession ? await api.getGroupChatSessionDetail(id) : await api.getPanelChatSessionDetail(id);
-    if (detailRequestIdRef.current != requestId) return;
+    const res = await api.getPanelChatSessionDetail(id);
     if (!res?.ok) {
       setErrorText(text.failedDetail);
       return;
     }
     setErrorText('');
     setMessages(Array.isArray(res.messages) ? res.messages : []);
+    setParticipants(Array.isArray(res.participants) ? res.participants : []);
     setPendingUserMessage(null);
-  }, [chatMode, text.failedDetail]);
+  }, [text.failedDetail]);
 
   useEffect(() => {
     (async () => {
       try {
-        await Promise.all([loadSessions(), loadGroupSessions(), loadAgents()]);
+        await Promise.all([loadSessions(), loadAgents()]);
       } finally {
         setBooting(false);
       }
     })();
-  }, [loadAgents, loadGroupSessions, loadSessions]);
+  }, [loadAgents, loadSessions]);
 
   useEffect(() => {
-    loadDetail(selectedId);
+    void loadDetail(selectedId);
   }, [loadDetail, selectedId]);
 
   useEffect(() => {
-    setMessages([]);
-    setPendingUserMessage(null);
-    setErrorText('');
-  }, [chatMode]);
-
-  useLayoutEffect(() => {
     const container = messageListRef.current;
     if (!container) return;
-    container.scrollTop = container.scrollHeight;
+    requestAnimationFrame(() => {
+      container.scrollTop = container.scrollHeight;
+    });
   }, [messages, pendingUserMessage, processing]);
+
+  useEffect(() => {
+    if (!selectedSession) return;
+    const belongsToMode = draftMode === 'group' ? selectedSession.chatType === 'group' : selectedSession.chatType !== 'group';
+    if (!belongsToMode) {
+      const fallback = visibleSessions[0]?.id || '';
+      setSelectedId(fallback);
+      if (!fallback) {
+        setMessages([]);
+        setParticipants([]);
+      }
+    }
+  }, [draftMode, selectedSession, visibleSessions]);
+
+  const toggleDraftAgent = useCallback((agentId: string) => {
+    setSelectedAgentIds(current => {
+      if (current.includes(agentId)) {
+        const next = current.filter(item => item !== agentId);
+        return next.length > 0 ? next : [agentId];
+      }
+      return [...current, agentId];
+    });
+  }, []);
 
   useEffect(() => {
     const lastAssistant = [...messages].reverse().find(message => message.role === 'assistant');
@@ -470,54 +356,38 @@ export default function PanelChat() {
     }
   }, [messages]);
 
-  const createSession = useCallback(async (agentOverride?: string) => {
+  const createSession = useCallback(async (agentId = selectedAgentId, mode: 'direct' | 'group' = 'direct') => {
     if (creating) return '';
     setCreating(true);
     setErrorText('');
     try {
-      const agentId = (agentOverride || selectedAgentId || agents[0]?.id || 'main').trim();
-      const res = await api.createPanelChatSession({ chatType: 'direct', agentId });
-      if (!res?.ok || !res.session?.id) {
-        setErrorText(text.failedCreate);
+      const participantIds = mode === 'group'
+        ? Array.from(new Set((selectedAgentIds.length > 0 ? selectedAgentIds : [agentId]).filter(Boolean)))
+        : [agentId];
+      if (mode === 'group' && participantIds.length < 2) {
+        setErrorText(text.minGroupAgents);
         return '';
       }
-        await loadSessions(res.session.id);
-      setSelectedId(res.session.id);
-      setMessages([]);
-      return res.session.id as string;
-    } finally {
-      setCreating(false);
-    }
-  }, [agents, creating, loadSessions, selectedAgentId, text.failedCreate]);
-
-  const createGroupSession = useCallback(async () => {
-    const participantAgentIds = Array.from(new Set(groupDraft.agentIds.filter(Boolean)));
-    if (participantAgentIds.length === 0) {
-      setErrorText(text.failedCreate);
-      return '';
-    }
-    const controllerAgentId = participantAgentIds.includes('main') ? 'main' : participantAgentIds[0];
-    setCreating(true);
-    setErrorText('');
-    try {
-      const res = await api.createGroupChatSession({
-        title: groupDraft.title,
-        participantAgentIds,
-        hostAgentId: controllerAgentId,
+      const primaryAgentId = mode === 'group' ? (participantIds[0] || agentId) : agentId;
+      const res = await api.createPanelChatSession({
+        chatType: mode === 'group' || participantIds.length > 1 || isGroupDraft ? 'group' : 'direct',
+        agentId: primaryAgentId,
+        agentIds: participantIds,
+        summaryAgentId: mode === 'group' ? (summaryAgentId || undefined) : undefined,
       });
       if (!res?.ok || !res.session?.id) {
         setErrorText(text.failedCreate);
         return '';
       }
-      await loadGroupSessions(res.session.id);
+      await loadSessions(res.session.id);
       setSelectedId(res.session.id);
       setMessages([]);
-      setGroupDraft({ open: false, title: '', agentIds: participantAgentIds });
+      setParticipants(Array.isArray(res.participants) ? res.participants : []);
       return res.session.id as string;
     } finally {
       setCreating(false);
     }
-  }, [groupDraft, loadGroupSessions, text.failedCreate]);
+  }, [creating, isGroupDraft, loadSessions, selectedAgentId, selectedAgentIds, summaryAgentId, text.failedCreate, text.minGroupAgents]);
 
   const appendAbortMarker = useCallback((sessionId: string) => {
     if (abortMarkerHandledRef.current[sessionId]) return;
@@ -549,8 +419,7 @@ export default function PanelChat() {
   }, [appendAbortMarker, processingSessionId]);
 
   const handleSend = useCallback(async () => {
-    const rawMessage = input.trim();
-    const message = rawMessage;
+    const message = input.trim();
     if (!message || loading) return;
     let sessionId = selectedId;
     const requestId = activeRequestIdRef.current + 1;
@@ -559,14 +428,12 @@ export default function PanelChat() {
     setLoading(true);
     setInput('');
     try {
-      if (!sessionId) {
-        sessionId = chatMode === 'group' ? await createGroupSession() : await createSession();
-      }
+      if (!sessionId) sessionId = await createSession(selectedAgentId, draftMode);
       if (!sessionId) return;
       setPendingUserMessage({
         id: `pending-user-${Date.now()}`,
         role: 'user',
-        content: rawMessage,
+        content: message,
         timestamp: new Date().toISOString(),
         sessionId,
       });
@@ -574,13 +441,13 @@ export default function PanelChat() {
       const controller = new AbortController();
       abortControllerRef.current = controller;
       const token = localStorage.getItem('admin-token') || '';
-      const response = await fetch(chatMode === 'group' ? `/api/group-chat/sessions/${sessionId}/messages` : `/api/panel-chat/sessions/${sessionId}/messages`, {
+      const response = await fetch(`/api/panel-chat/sessions/${sessionId}/messages`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify(chatMode === 'group' ? { message } : { message }),
+        body: JSON.stringify({ message }),
         signal: controller.signal,
       });
       const res = await response.json();
@@ -589,26 +456,16 @@ export default function PanelChat() {
       if (res?.ok) {
         abortMarkerHandledRef.current[sessionId] = false;
         if (selectedIdRef.current === sessionId) {
-          const nextMessages = Array.isArray(res.messages) ? [...res.messages] : [];
-          if (chatMode === 'group' && nextMessages.length > 0) {
-            for (let i = nextMessages.length - 1; i >= 0; i -= 1) {
-              if (nextMessages[i]?.role === 'user') {
-                nextMessages[i] = { ...nextMessages[i], content: rawMessage };
-                break;
-              }
-            }
-          }
-          setMessages(nextMessages);
+          setMessages(Array.isArray(res.messages) ? res.messages : []);
+          setParticipants(Array.isArray(res.participants) ? res.participants : []);
           setPendingUserMessage(null);
         }
-        if (chatMode === 'group') await loadGroupSessions(sessionId); else await loadSessions(sessionId);
+        await loadSessions(sessionId);
       } else if (res?.canceled) {
         appendAbortMarker(sessionId);
         await loadSessions(sessionId);
       } else {
-        if (selectedIdRef.current === sessionId) {
-          setPendingUserMessage(null);
-        }
+        if (selectedIdRef.current === sessionId) setPendingUserMessage(null);
         setInput(message);
         setErrorText(res?.error || text.failedSend);
       }
@@ -625,21 +482,18 @@ export default function PanelChat() {
     } finally {
       if (activeRequestIdRef.current !== requestId) return;
       if (sessionId) {
-        if (!processingSessionId || processingSessionId === sessionId) {
-          abortMarkerHandledRef.current[sessionId] = false;
-        }
+        if (!processingSessionId || processingSessionId === sessionId) abortMarkerHandledRef.current[sessionId] = false;
         setProcessingSessionId(current => current === sessionId ? '' : current);
       }
       setLoading(false);
     }
-  }, [appendAbortMarker, chatMode, createGroupSession, createSession, input, loadGroupSessions, loadSessions, loading, selectedId, text.failedSend]);
+  }, [appendAbortMarker, createSession, draftMode, input, loadSessions, loading, processingSessionId, selectedAgentId, selectedId, text.failedSend]);
 
   const handleDelete = useCallback(async () => {
     if (!selectedSession || interactionLocked || !window.confirm(text.deleteConfirm)) return;
     const deletingId = selectedSession.id;
-    const pool = chatMode === 'group' ? groupSessions : directSessions;
-    const fallback = pool.find(item => item.id !== deletingId)?.id || '';
-    const res = chatMode === 'group' ? await api.deleteGroupChatSession(deletingId) : await api.deletePanelChatSession(deletingId);
+    const fallback = sessions.find(item => item.id !== deletingId)?.id || '';
+    const res = await api.deletePanelChatSession(deletingId);
     if (!res?.ok) {
       setErrorText(text.failedDelete);
       return;
@@ -647,8 +501,8 @@ export default function PanelChat() {
     setErrorText('');
     setSelectedId(fallback);
     if (!fallback) setMessages([]);
-    if (chatMode === 'group') await loadGroupSessions(fallback); else await loadSessions(fallback);
-  }, [chatMode, directSessions, groupSessions, interactionLocked, loadGroupSessions, loadSessions, selectedSession, text.deleteConfirm, text.failedDelete]);
+    await loadSessions(fallback);
+  }, [interactionLocked, loadSessions, selectedSession, sessions, text.deleteConfirm, text.failedDelete]);
 
   const handleRename = useCallback(async () => {
     if (!selectedSession) return;
@@ -658,15 +512,15 @@ export default function PanelChat() {
       setDraftTitle(selectedSession.title);
       return;
     }
-    const res = chatMode === 'group' ? await api.renameGroupChatSession(selectedSession.id, title) : await api.renamePanelChatSession(selectedSession.id, title);
+    const res = await api.renamePanelChatSession(selectedSession.id, title);
     if (!res?.ok) {
       setErrorText(text.failedRename);
       return;
     }
     setErrorText('');
     setRenaming(false);
-    if (chatMode === 'group') await loadGroupSessions(selectedSession.id); else await loadSessions(selectedSession.id);
-  }, [chatMode, draftTitle, loadGroupSessions, loadSessions, selectedSession, text.failedRename]);
+    await loadSessions(selectedSession.id);
+  }, [draftTitle, loadSessions, selectedSession, text.failedRename]);
 
   const handleCopyCode = useCallback(async (content: string) => {
     try {
@@ -680,39 +534,9 @@ export default function PanelChat() {
         setCopiedCode(current => current === content ? '' : current);
       }, 1800);
     } catch {
-      try {
-        const textarea = document.createElement('textarea');
-        textarea.value = content;
-        textarea.setAttribute('readonly', 'true');
-        textarea.style.position = 'fixed';
-        textarea.style.top = '-1000px';
-        textarea.style.opacity = '0';
-        document.body.appendChild(textarea);
-        textarea.focus();
-        textarea.select();
-        textarea.setSelectionRange(0, textarea.value.length);
-        const copied = document.execCommand('copy');
-        document.body.removeChild(textarea);
-        if (!copied) throw new Error('execCommand failed');
-        setCopiedCode(content);
-        window.setTimeout(() => {
-          setCopiedCode(current => current === content ? '' : current);
-        }, 1800);
-      } catch {
-        setErrorText(locale === 'en' ? 'Copy failed.' : '复制失败。');
-      }
+      setErrorText(locale === 'en' ? 'Copy failed.' : '复制失败。');
     }
   }, [locale]);
-
-  const handleCreateSessionWithSelectedAgent = useCallback(async () => {
-    const nextId = await createSession(selectedAgentId);
-    if (nextId) {
-      setChatMode('direct');
-      setSelectedId(nextId);
-      setMessages([]);
-      setPendingUserMessage(null);
-    }
-  }, [createSession, selectedAgentId]);
 
   return (
     <div className={`flex h-full min-h-0 flex-col gap-4 ${modern ? 'page-modern' : ''}`}>
@@ -736,72 +560,117 @@ export default function PanelChat() {
       <section className={`grid min-h-0 flex-1 gap-4 ${modern ? 'xl:grid-cols-[320px_minmax(0,1fr)]' : 'lg:grid-cols-[320px_minmax(0,1fr)]'}`}>
         <aside className={`${modern ? 'page-modern-panel' : 'ui-modern-card'} flex min-h-[240px] flex-col overflow-hidden p-0`}>
           <div className="shrink-0 border-b border-slate-200/70 bg-white/80 px-4 py-4 dark:border-slate-700/70 dark:bg-slate-950/40">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex gap-2 text-xs">
-                <button type="button" onClick={() => { setChatMode('direct'); setSelectedId(directSessions[0]?.id || ''); }} className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs transition ${chatMode === 'direct' ? 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200' : 'border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900'}`}>{text.direct}</button>
-                <button type="button" onClick={() => { setChatMode('group'); setSelectedId(groupSessions[0]?.id || ''); }} className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs transition ${chatMode === 'group' ? 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200' : 'border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900'}`}>{text.group}</button>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-2 rounded-2xl border border-slate-200 bg-slate-100/80 p-1 dark:border-slate-700 dark:bg-slate-900/70">
+                <button
+                  type="button"
+                  onClick={() => setDraftMode('direct')}
+                  className={`rounded-xl px-3 py-2 text-xs font-medium transition ${draftMode === 'direct' ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-800 dark:text-slate-100' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'}`}
+                >
+                  {text.modeSingle}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDraftMode('group')}
+                  className={`rounded-xl px-3 py-2 text-xs font-medium transition ${draftMode === 'group' ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-800 dark:text-slate-100' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'}`}
+                >
+                  {text.modeGroup}
+                </button>
               </div>
-              <button onClick={chatMode === 'group' ? () => setGroupDraft(current => ({ ...current, open: true, agentIds: current.agentIds.length > 0 ? current.agentIds : ['main'] })) : () => void createSession()} disabled={interactionLocked} className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-2 text-xs font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100">
+              {draftMode === 'direct' && (
+                <div>
+                  <div className="mb-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">{text.agentForNewChat}</div>
+                  <select
+                    value={selectedAgentId}
+                    onChange={event => {
+                      setSelectedAgentId(event.target.value);
+                      setSelectedAgentIds([event.target.value]);
+                      setSummaryAgentId(current => current || event.target.value);
+                    }}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                  >
+                    {agents.map(agent => (
+                      <option key={agent.id} value={agent.id}>
+                        {agentDisplayName(agent)}{agent.isDefault ? ` · ${text.defaultAgentSuffix}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {draftMode === 'group' && (
+                <>
+                  <div>
+                    <div className="mb-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">{text.groupAgents}</div>
+                    <div className="flex flex-wrap gap-2">
+                      {agents.map(agent => {
+                        const active = selectedAgentIds.includes(agent.id);
+                        return (
+                          <button
+                            key={`draft-${agent.id}`}
+                            type="button"
+                            onClick={() => toggleDraftAgent(agent.id)}
+                            className={`rounded-full px-3 py-1.5 text-xs transition ${active ? agentBadgeTone(agent.id) : 'border border-slate-200 bg-white text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400'}`}
+                          >
+                            {agentDisplayName(agent)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="mb-1 text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">{text.summaryAgent}</div>
+                    <select
+                      value={summaryAgentId}
+                      onChange={event => setSummaryAgentId(event.target.value)}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    >
+                      {agents.map(agent => (
+                        <option key={`summary-${agent.id}`} value={agent.id}>{agentDisplayName(agent)}</option>
+                      ))}
+                    </select>
+                  </div>
+                </>
+              )}
+              <button onClick={() => void createSession(selectedAgentId, draftMode)} disabled={interactionLocked} className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-3 py-2 text-xs font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100">
                 {creating ? <Loader2 size={14} className="animate-spin" /> : <MessageSquarePlus size={14} />}
-                {text.newChat}
+                {draftMode === 'group' ? text.newGroupChat : text.newDirectChat}
               </button>
             </div>
             <div className="mt-3 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-              <span className="font-semibold text-slate-900 dark:text-slate-100 tabular-nums">{displayedSessions.length}</span>
-              <span>会话</span>
+              <span className="font-semibold text-slate-900 dark:text-slate-100 tabular-nums">{visibleSessions.length}</span>
+              <span>{draftMode === 'group' ? text.modeGroup : text.modeSingle}</span>
+              {selectedSession && (
+                <span className={`inline-flex items-center rounded-full p-1.5 ${sessionBadgeTone(selectedSession.chatType)}`}>
+                  {selectedSession.chatType === 'group' ? <Users size={12} /> : <User size={12} />}
+                </span>
+              )}
             </div>
-            {chatMode === 'direct' && (
-              <div className="mt-3 rounded-2xl border border-slate-200/80 bg-white/80 px-3 py-3 dark:border-slate-700 dark:bg-slate-950/50">
-                <label className="mb-2 block text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">{text.agentForNewChat}</label>
-                <select
-                  value={selectedAgentId}
-                  onChange={event => setSelectedAgentId(event.target.value)}
-                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-blue-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                >
-                  {agents.map(agent => (
-                    <option key={agent.id} value={agent.id}>{agent.name ? `${agent.name} (${agent.id})` : agent.id}{agent.isDefault ? ` · ${text.defaultAgentSuffix}` : ''}</option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  onClick={() => void handleCreateSessionWithSelectedAgent()}
-                  disabled={interactionLocked || !selectedAgentId}
-                  className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900"
-                >
-                  {text.openWithAgent}
-                  {selectedDraftAgentMeta && <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${agentBadgeTone(selectedDraftAgentMeta.id)}`}>{agentDisplayName(selectedDraftAgentMeta)}</span>}
-                </button>
-              </div>
-            )}
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50/70 p-3 dark:bg-slate-950/30">
             {booting ? (
               <div className="flex h-full items-center justify-center text-sm text-slate-400"><Loader2 size={16} className="mr-2 animate-spin" />{text.loading}</div>
-            ) : displayedSessions.length === 0 ? (
+            ) : visibleSessions.length === 0 ? (
               <div className="flex h-full items-center justify-center px-4 text-center text-sm text-slate-400">{text.noSessions}</div>
             ) : (
               <div className="space-y-2">
-                {displayedSessions.map(session => (
+                {visibleSessions.map(session => (
                   <button
                     key={session.id}
                     onClick={() => {
-                      if (sessionSwitchLocked) return;
-                      if (session.id !== selectedId) {
-                        detailRequestIdRef.current += 1;
-                        setMessages([]);
-                        setPendingUserMessage(null);
-                      }
+                      if (creating) return;
                       setErrorText('');
                       setSelectedId(session.id);
                     }}
-                    disabled={sessionSwitchLocked}
+                    disabled={creating}
                     className={`w-full rounded-2xl border px-3 py-3 text-left transition ${selectedId === session.id ? 'border-blue-200 bg-blue-50 shadow-sm ring-1 ring-blue-100 dark:border-blue-500/40 dark:bg-blue-500/12 dark:ring-blue-500/20' : 'border-transparent bg-white/75 hover:border-slate-200 hover:bg-white dark:bg-slate-900/30 dark:hover:border-slate-800 dark:hover:bg-slate-900/55'}`}
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className={`truncate text-sm font-semibold ${selectedId === session.id ? 'text-blue-900 dark:text-blue-100' : 'text-slate-800 dark:text-slate-100'}`}>{session.title || text.newChat}</span>
-                      <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] text-slate-500 dark:border-slate-600 dark:bg-transparent dark:text-slate-300">{session.chatType === 'group' ? <Users size={12} className="inline-block" /> : <User size={12} className="inline-block" />}</span>
+                      <span className={`inline-flex items-center rounded-full p-1 text-[10px] ${sessionBadgeTone(session.chatType)}`}>
+                        {session.chatType === 'group' ? <Users size={11} /> : <User size={11} />}
+                      </span>
                     </div>
-                    <p className={`mt-1 line-clamp-2 text-xs ${selectedId === session.id ? 'text-blue-700 dark:text-blue-200' : 'text-slate-500 dark:text-slate-400'}`}>{session.processing ? text.processing : (session.lastMessage || `${text.agentLabel}: ${agentDisplayName(agents.find(item => item.id === session.agentId)) || session.agentId}`)}</p>
+                    <p className={`mt-1 line-clamp-2 text-xs ${selectedId === session.id ? 'text-blue-700 dark:text-blue-200' : 'text-slate-500 dark:text-slate-400'}`}>{session.processing ? `${text.processing}${session.currentAgentName ? ` · ${session.currentAgentName}` : session.currentAgentId ? ` · ${session.currentAgentId}` : ''}` : (session.lastMessage || `${text.agentLabel}: ${session.agentId}`)}</p>
                   </button>
                 ))}
               </div>
@@ -823,76 +692,29 @@ export default function PanelChat() {
               ) : (
                 <h3 className="text-base font-semibold text-slate-900 dark:text-slate-50">{selectedSession?.title || text.emptyTitle}</h3>
               )}
-              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-                {selectedSession ? (
-                  selectedSession.chatType === 'group' ? (
-                    <>
-                      <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 dark:border-slate-700 dark:bg-slate-900">{statusLabel(selectedSession.status, locale)}</span>
-                      <span className="text-slate-400 dark:text-slate-500">主控</span>
-                      <span className={`rounded-full px-2.5 py-1 font-semibold ${agentBadgeTone(selectedSession.controllerAgentId || selectedSession.agentId)}`}>{agentDisplayName(agents.find(item => item.id === (selectedSession.controllerAgentId || selectedSession.agentId))) || selectedSession.controllerAgentId || selectedSession.agentId}</span>
-                      {selectedSession.participantAgentIds && selectedSession.participantAgentIds.filter(agentId => agentId !== (selectedSession.controllerAgentId || selectedSession.agentId)).length > 0 && (
-                        <>
-                          <span className="text-slate-400 dark:text-slate-500">参与</span>
-                          {selectedSession.participantAgentIds.filter(agentId => agentId !== (selectedSession.controllerAgentId || selectedSession.agentId)).map(agentId => {
-                            const agentMeta = agents.find(item => item.id === agentId);
-                            return <span key={agentId} className={`rounded-full px-2.5 py-1 font-semibold ${agentBadgeTone(agentId)}`}>{agentDisplayName(agentMeta) || agentId}</span>;
-                          })}
-                        </>
-                      )}
-                    </>
-                  ) : (
-                    <>
-                      <span>{text.agentLabel}:</span>
-                      <span className={`rounded-full px-2.5 py-1 font-semibold ${agentBadgeTone(selectedSession.agentId)}`}>{selectedAgentMeta?.name ? `${selectedAgentMeta.name} (${selectedSession.agentId})` : selectedSession.agentId}</span>
-                      <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 dark:border-slate-700 dark:bg-slate-900">{statusLabel(selectedSession.status, locale)}</span>
-                    </>
-                  )
-                ) : (
-                  <span>{text.emptyDesc}</span>
-                )}
-              </div>
-              {processing && <p className="mt-1 text-xs font-medium text-blue-600 dark:text-blue-300">{text.processing}</p>}
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{selectedSession ? `${selectedSession.chatType === 'group' ? text.groupMode : text.agentLabel}: ${selectedSession.chatType === 'group' ? `${participants.length || selectedSession.participantCount || 0} AI` : (agentDisplayName(agents.find(item => item.id === selectedSession.agentId)) || selectedSession.agentId)}` : text.emptyDesc}</p>
+              {selectedSession && participants.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {participants.map(participant => (
+                    <span key={`participant-${participant.agentId}`} className={`rounded-full px-2 py-1 text-[11px] ${agentBadgeTone(participant.agentId)}`}>
+                      {participant.name || participant.agentId}{participant.isSummary ? ' · Summary' : ''}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {processing && <p className="mt-2 text-xs font-medium text-blue-600 dark:text-blue-300">{text.replyingNow}: {currentRespondingAgent || text.processing}</p>}
             </div>
-              <div className="flex items-center gap-2">
-                {chatMode === 'group' && (
-                  <button type="button" onClick={() => setShowGroupTaskCard(value => !value)} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-600 transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900">
-                    {showGroupTaskCard ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                    {showGroupTaskCard ? text.hideTaskCard : text.showTaskCard}
-                  </button>
-                )}
-                <button onClick={() => setRenaming(value => !value)} disabled={!selectedSession || interactionLocked} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900">{text.rename}</button>
-                <button onClick={handleDelete} disabled={!selectedSession || interactionLocked} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900">
-                  <Trash2 size={14} />
-                  {text.delete}
-                </button>
+            <div className="flex items-center gap-2">
+              <button onClick={() => setRenaming(value => !value)} disabled={!selectedSession || interactionLocked} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900">{text.rename}</button>
+              <button onClick={handleDelete} disabled={!selectedSession || interactionLocked} className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900">
+                <Trash2 size={14} />
+                {text.delete}
+              </button>
             </div>
           </div>
 
           <div ref={messageListRef} className="min-h-0 flex-1 overflow-y-auto bg-[radial-gradient(circle_at_top,rgba(59,130,246,0.08),transparent_24%),linear-gradient(180deg,rgba(255,255,255,0.16),transparent_36%)] px-5 py-5 dark:bg-[radial-gradient(circle_at_top,rgba(59,130,246,0.14),transparent_28%),linear-gradient(180deg,rgba(255,255,255,0.03),transparent_36%)]">
-            {chatMode === 'group' && selectedSession && (
-              <div className="sticky top-0 z-10 mb-5 space-y-3 bg-transparent pb-2">
-                {showGroupTaskCard && (
-              <div className="rounded-3xl border border-slate-200/80 bg-white/95 p-4 shadow-sm backdrop-blur-sm dark:border-slate-700/80 dark:bg-slate-950/90">
-                <div className="flex flex-wrap items-start justify-between gap-4">
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">{text.taskCard}</div>
-                    <p className="mt-2 line-clamp-3 text-sm leading-6 text-slate-700 dark:text-slate-200">{latestGroupUserTask || '当前群聊会话正在等待新的协作任务。'}</p>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 text-xs">
-                    <span className="text-slate-400">主控</span>
-                    <span className={`rounded-full px-2.5 py-1 font-semibold ${agentBadgeTone(selectedSession.controllerAgentId || selectedSession.agentId)}`}>{agentDisplayName(agents.find(item => item.id === (selectedSession.controllerAgentId || selectedSession.agentId))) || selectedSession.controllerAgentId || selectedSession.agentId}</span>
-                  </div>
-                </div>
-                <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
-                  {[['all', text.viewAll], ['internal', text.viewInternal], ['final', text.viewFinal]].map(([value, label]) => (
-                    <button key={value} type="button" onClick={() => setGroupMessageView(value as GroupMessageView)} className={`rounded-xl border px-3 py-1.5 transition ${groupMessageView === value ? 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200' : 'border-slate-200 bg-white text-slate-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-400'}`}>{label}</button>
-                  ))}
-                </div>
-              </div>
-                )}
-              </div>
-            )}
-            {filteredTimelineMessages.length === 0 ? (
+            {timelineMessages.length === 0 ? (
               <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-slate-400">
                 <div className="flex h-16 w-16 items-center justify-center rounded-full border border-blue-100 bg-white/80 text-blue-500 shadow-sm dark:border-blue-500/20 dark:bg-slate-900/70 dark:text-blue-200">
                   <Bot size={28} />
@@ -903,97 +725,90 @@ export default function PanelChat() {
                 </div>
               </div>
             ) : (
-              <div className="flex min-h-full flex-col justify-end">
-                <div className="space-y-4">
-                {filteredTimelineMessages.map((message) => {
+              <div className="space-y-4">
+                {timelineMessages.map(message => {
                   const isUser = message.role === 'user';
                   const isSystem = message.role === 'system';
-                  const isInternal = message.kind === 'discussion';
+                  const messageAgentId = message.agentId || selectedSession?.agentId || 'assistant';
                   return (
                     <Fragment key={message.id}>
-                    <div className={`flex gap-3 ${isSystem ? 'justify-center' : isUser ? 'justify-end' : 'justify-start'}`}>
-                      {isSystem ? (
-                        <div className="my-2 flex w-full items-center gap-3 text-xs text-slate-400 dark:text-slate-500">
-                          <div className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
-                          <span className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-1 font-medium dark:border-slate-700 dark:bg-slate-900">{message.content}</span>
-                          <div className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
-                        </div>
-                      ) : (
-                        <>
-                      {!isUser && <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"><Bot size={15} /></div>}
-                      <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm transition ${isUser ? 'rounded-tr-sm bg-[linear-gradient(135deg,#1d4ed8,#0284c7)] text-right text-white shadow-blue-200/50 dark:shadow-none' : isInternal ? 'rounded-tl-sm border border-amber-200/80 bg-amber-50 text-slate-700 dark:border-amber-500/20 dark:bg-slate-900 dark:text-slate-200' : 'rounded-tl-sm border border-slate-200/70 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200'} ${highlightedId === message.id ? 'ring-2 ring-blue-300 dark:ring-blue-500/50' : ''}`}>
-                        {!isUser && chatMode === 'group' && message.agentId && (
-                          <div className="mb-2 flex items-center gap-2 text-[11px]">
-                            <span className={`rounded-full px-2.5 py-1 font-semibold ${agentBadgeTone(message.agentId)}`}>{message.agentId}</span>
-                            {isInternal && <span className="rounded-full border border-amber-200 bg-white px-2 py-0.5 text-[10px] text-amber-700 dark:border-amber-500/30 dark:bg-transparent dark:text-amber-200">内部协作</span>}
-                            {message.agentId === (agents[0]?.id || 'main') && <span className="text-slate-400 dark:text-slate-500">{locale === 'en' ? 'Lead Agent' : '主 Agent'}</span>}
+                      <div className={`flex gap-3 ${isSystem ? 'justify-center' : isUser ? 'justify-end' : 'justify-start'}`}>
+                        {isSystem ? (
+                          <div className="my-2 flex w-full items-center gap-3 text-xs text-slate-400 dark:text-slate-500">
+                            <div className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
+                            <span className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-1 font-medium dark:border-slate-700 dark:bg-slate-900">{message.content}</span>
+                            <div className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
                           </div>
-                        )}
-                        {isUser ? message.content : (
+                        ) : (
                           <>
-                            {message.content && (
-                              <ReactMarkdown
-                                remarkPlugins={[remarkGfm]}
-                                components={{
-                                  p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-                                  hr: () => <hr className="my-4 border-slate-200 dark:border-slate-700" />,
-                                  table: ({ children }) => <div className="my-3 overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700"><table className="min-w-full border-collapse text-left text-[13px]">{children}</table></div>,
-                                  thead: ({ children }) => <thead className="bg-slate-100 dark:bg-slate-900">{children}</thead>,
-                                  th: ({ children }) => <th className="border-b border-slate-200 px-3 py-2 font-semibold text-slate-700 dark:border-slate-700 dark:text-slate-100">{children}</th>,
-                                  td: ({ children }) => <td className="border-b border-slate-200 px-3 py-2 text-slate-600 dark:border-slate-800 dark:text-slate-300">{children}</td>,
-                                  ul: ({ children }) => <ul className="mb-2 list-disc space-y-1 pl-5 last:mb-0">{children}</ul>,
-                                  ol: ({ children }) => <ol className="mb-2 list-decimal space-y-1 pl-5 last:mb-0">{children}</ol>,
-                                  code: ({ className, children, ...props }: any) => {
-                                    const isBlock = Boolean(className);
-                                    return isBlock
-                                      ? <code className="block text-[13px] text-slate-100">{children}</code>
-                                      : <code className="rounded-md border border-slate-200 bg-slate-100 px-1.5 py-0.5 text-[13px] text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100" {...props}>{children}</code>;
-                                  },
-                                  pre: ({ children }) => {
-                                    const raw = String((children as any)?.props?.children ?? '').replace(/\n$/, '');
-                                    const copied = copiedCode === raw;
-                                    return (
-                                      <div className="my-3 overflow-hidden rounded-xl border border-slate-200 bg-slate-900 shadow-sm dark:border-slate-700">
-                                        <div className="flex items-center justify-between border-b border-slate-700/80 bg-slate-800/95 px-3 py-2 text-xs text-slate-300">
-                                          <span>shell</span>
-                                          <button
-                                            type="button"
-                                            onClick={(event) => {
-                                              event.preventDefault();
-                                              event.stopPropagation();
-                                              void handleCopyCode(raw);
-                                            }}
-                                            className="inline-flex items-center gap-1 rounded-md border border-slate-600 px-2 py-1 text-slate-200 transition hover:bg-slate-700"
-                                          >
-                                            {copied ? <Check size={12} /> : <Copy size={12} />}
-                                            {copied ? text.copied : text.copy}
-                                          </button>
-                                        </div>
-                                        <pre className="overflow-x-auto px-3 py-3 text-[13px] leading-6 text-slate-100">{children}</pre>
-                                      </div>
-                                    );
-                                  },
-                                }}
-                              >
-                                {formatDiagramBlocks(message.content)}
-                              </ReactMarkdown>
-                            )}
-                            {Array.isArray(message.images) && message.images.length > 0 && (
-                              <div className="mt-3 space-y-3">
-                                {message.images.map((image, index) => (
-                                  <a key={`${message.id}-image-${index}`} href={image.src} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md dark:border-slate-700 dark:bg-slate-950">
-                                    <img src={image.src} alt={`assistant-image-${index + 1}`} className="max-h-[420px] w-full object-contain bg-slate-50 dark:bg-slate-950" loading="lazy" />
-                                  </a>
-                                ))}
-                              </div>
-                            )}
+                            {!isUser && <div className={`mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${agentBadgeTone(messageAgentId)}`}><Bot size={15} /></div>}
+                            <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm transition ${isUser ? 'rounded-tr-sm bg-[linear-gradient(135deg,#1d4ed8,#0284c7)] text-right text-white shadow-blue-200/50 dark:shadow-none' : 'rounded-tl-sm border border-slate-200/70 bg-white/95 text-slate-700 dark:border-slate-700/70 dark:bg-slate-900/92 dark:text-slate-200'} ${highlightedId === message.id ? 'ring-2 ring-blue-300 dark:ring-blue-500/50' : ''}`}>
+                              {!isUser && (
+                                <div className="mb-2 flex items-center gap-2 text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                                  <span className={`rounded-full px-2 py-0.5 ${agentBadgeTone(messageAgentId)}`}>{message.agentName || message.agentId || selectedSession?.agentId || 'AI'}</span>
+                                  {message.messageType === 'summary' && <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">Summary</span>}
+                                </div>
+                              )}
+                              {isUser ? message.content : (
+                                <>
+                                  {message.content && (
+                                    <ReactMarkdown
+                                      remarkPlugins={[remarkGfm]}
+                                      components={{
+                                        p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                                        ul: ({ children }) => <ul className="mb-2 list-disc space-y-1 pl-5 last:mb-0">{children}</ul>,
+                                        ol: ({ children }) => <ol className="mb-2 list-decimal space-y-1 pl-5 last:mb-0">{children}</ol>,
+                                        code: ({ className, children, ...props }: any) => {
+                                          const isBlock = Boolean(className);
+                                          return isBlock
+                                            ? <code className="block text-[13px] text-slate-100">{children}</code>
+                                            : <code className="rounded-md border border-slate-200 bg-slate-100 px-1.5 py-0.5 text-[13px] text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100" {...props}>{children}</code>;
+                                        },
+                                        pre: ({ children }) => {
+                                          const raw = String((children as any)?.props?.children ?? '').replace(/\n$/, '');
+                                          const copied = copiedCode === raw;
+                                          return (
+                                            <div className="my-3 overflow-hidden rounded-xl border border-slate-200 bg-slate-900 shadow-sm dark:border-slate-700">
+                                              <div className="flex items-center justify-between border-b border-slate-700/80 bg-slate-800/95 px-3 py-2 text-xs text-slate-300">
+                                                <span>shell</span>
+                                                <button
+                                                  type="button"
+                                                  onClick={event => {
+                                                    event.preventDefault();
+                                                    event.stopPropagation();
+                                                    void handleCopyCode(raw);
+                                                  }}
+                                                  className="inline-flex items-center gap-1 rounded-md border border-slate-600 px-2 py-1 text-slate-200 transition hover:bg-slate-700"
+                                                >
+                                                  {copied ? <Check size={12} /> : <Copy size={12} />}
+                                                  {copied ? text.copied : text.copy}
+                                                </button>
+                                              </div>
+                                              <pre className="overflow-x-auto px-3 py-3 text-[13px] leading-6 text-slate-100">{children}</pre>
+                                            </div>
+                                          );
+                                        },
+                                      }}
+                                    >
+                                      {message.content}
+                                    </ReactMarkdown>
+                                  )}
+                                  {Array.isArray(message.images) && message.images.length > 0 && (
+                                    <div className="mt-3 space-y-3">
+                                      {message.images.map((image, index) => (
+                                        <a key={`${message.id}-image-${index}`} href={image.src} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md dark:border-slate-700 dark:bg-slate-950">
+                                          <img src={image.src} alt={`assistant-image-${index + 1}`} className="max-h-[420px] w-full object-contain bg-slate-50 dark:bg-slate-950" loading="lazy" />
+                                        </a>
+                                      ))}
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                              <div className={`mt-2 text-[11px] ${isUser ? 'text-white/75' : 'text-slate-400 dark:text-slate-500'}`}>{new Date(message.timestamp).toLocaleString()}</div>
+                            </div>
                           </>
                         )}
-                        <div className={`mt-2 text-[11px] ${isUser ? 'text-white/75' : 'text-slate-400 dark:text-slate-500'}`}>{new Date(message.timestamp).toLocaleString()}</div>
                       </div>
-                        </>
-                      )}
-                    </div>
                     </Fragment>
                   );
                 })}
@@ -1001,6 +816,7 @@ export default function PanelChat() {
                   <div className="flex gap-3 justify-start">
                     <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"><Bot size={15} /></div>
                     <div className="max-w-[85%] rounded-2xl rounded-tl-sm border border-dashed border-blue-200 bg-white/90 px-4 py-3 text-sm leading-6 text-slate-700 shadow-sm animate-pulse dark:border-blue-500/30 dark:bg-slate-900/90 dark:text-slate-200">
+                      <div className="mb-2 text-[11px] font-medium text-slate-500 dark:text-slate-400">{text.replyingNow}: {currentRespondingAgent || (selectedSession?.chatType === 'group' ? text.groupMode : (selectedSession?.agentId || 'AI'))}</div>
                       <div className="flex items-center gap-1.5 text-blue-500 dark:text-blue-300">
                         <span className="h-2 w-2 rounded-full bg-current animate-bounce [animation-delay:-0.3s]" />
                         <span className="h-2 w-2 rounded-full bg-current animate-bounce [animation-delay:-0.15s]" />
@@ -1009,7 +825,6 @@ export default function PanelChat() {
                     </div>
                   </div>
                 )}
-                </div>
               </div>
             )}
           </div>
@@ -1022,18 +837,16 @@ export default function PanelChat() {
                 onKeyDown={event => {
                   if (event.key === 'Enter' && !event.shiftKey) {
                     event.preventDefault();
-                    handleSend();
+                    void handleSend();
                   }
                 }}
                 rows={3}
-                placeholder={chatMode === 'group' ? text.groupInput : text.input}
+                placeholder={text.input}
                 className="w-full resize-none bg-transparent px-3 py-2 text-sm outline-none placeholder:text-slate-400 dark:text-slate-100"
               />
               <div className="flex items-center justify-between px-2 pb-1 pt-2">
-                <div className="flex items-center gap-3 text-xs text-slate-400">
-                  <span>{text.enterHint}</span>
-                </div>
-                <button onClick={loading ? handleAbort : handleSend} disabled={creating || (!loading && !input.trim())} className={`inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-50 ${loading ? 'bg-rose-600 hover:bg-rose-500 dark:bg-rose-500 dark:text-white dark:hover:bg-rose-400' : 'bg-slate-900 hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100'}`}>
+                <div className="text-xs text-slate-400">{text.enterHint}</div>
+                <button onClick={loading ? handleAbort : () => void handleSend()} disabled={creating || (!loading && !input.trim())} className={`inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-50 ${loading ? 'bg-rose-600 hover:bg-rose-500 dark:bg-rose-500 dark:text-white dark:hover:bg-rose-400' : 'bg-slate-900 hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100'}`}>
                   {loading ? <Square size={15} fill="currentColor" /> : <Send size={16} />}
                   {loading ? text.stop : text.send}
                 </button>
@@ -1042,53 +855,6 @@ export default function PanelChat() {
           </div>
         </div>
       </section>
-
-      {groupDraft.open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4">
-          <div className="w-full max-w-xl rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-700 dark:bg-slate-950">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-50">{text.createGroupTitle}</h3>
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{text.groupParticipantHint}</p>
-              </div>
-              <button type="button" onClick={() => setGroupDraft(current => ({ ...current, open: false }))} className="rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-300">关闭</button>
-            </div>
-            <div className="mt-4 space-y-4">
-              <div>
-                <label className="mb-2 block text-xs text-slate-500 dark:text-slate-400">{text.renamePlaceholder}</label>
-                <input value={groupDraft.title} onChange={event => setGroupDraft(current => ({ ...current, title: event.target.value }))} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" placeholder={text.createGroupTitle} />
-              </div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {agents.map(agent => {
-                  const checked = groupDraft.agentIds.includes(agent.id);
-                  return (
-                    <label key={agent.id} className={`flex cursor-pointer items-center justify-between gap-3 rounded-2xl border px-3 py-3 ${checked ? 'border-blue-200 bg-blue-50 dark:border-blue-500/30 dark:bg-blue-500/10' : 'border-slate-200 dark:border-slate-700'}`}>
-                      <div>
-                        <div className="text-sm font-medium text-slate-900 dark:text-slate-100">{agentDisplayName(agent)}</div>
-                        {agent.isDefault && <div className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">{text.defaultAgentSuffix}</div>}
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => setGroupDraft(current => {
-                          const exists = current.agentIds.includes(agent.id);
-                          const agentIds = exists ? current.agentIds.filter(item => item !== agent.id) : [...current.agentIds, agent.id];
-                          return { ...current, agentIds: agentIds.length > 0 ? agentIds : ['main'] };
-                        })}
-                        className="h-4 w-4"
-                      />
-                    </label>
-                  );
-                })}
-              </div>
-              <div className="flex justify-end gap-2">
-                <button type="button" onClick={() => setGroupDraft(current => ({ ...current, open: false }))} className="rounded-xl border border-slate-200 px-4 py-2 text-sm text-slate-600 dark:border-slate-700 dark:text-slate-300">取消</button>
-                <button type="button" onClick={() => void createGroupSession()} disabled={creating || groupDraft.agentIds.length === 0} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-slate-900">{text.createGroupConfirm}</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
