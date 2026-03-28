@@ -42,20 +42,20 @@ func TestResolvePluginInstallStrategyUsesExplicitNpmSource(t *testing.T) {
 	}
 }
 
-func TestResolvePluginInstallStrategyUsesPreferredQQBotTarball(t *testing.T) {
+func TestResolvePluginInstallStrategyUsesPreferredQQBotPackage(t *testing.T) {
 	t.Parallel()
 
 	strategy := resolvePluginInstallStrategy(&RegistryPlugin{
-		PluginMeta: PluginMeta{ID: "qqbot"},
-		GitURL:     "https://github.com/zhaoxinyi02/ClawPanel-Plugins.git",
+		PluginMeta:    PluginMeta{ID: "qqbot"},
+		GitURL:        "https://github.com/zhaoxinyi02/ClawPanel-Plugins.git",
 		InstallSubDir: "official/qqbot",
 	}, "")
 
-	if strategy.kind != "download" {
-		t.Fatalf("expected qqbot to use direct download, got %#v", strategy)
+	if strategy.kind != "npm" {
+		t.Fatalf("expected qqbot to use npm strategy, got %#v", strategy)
 	}
-	if !strings.HasSuffix(strategy.target, "/official/qqbot/qqbot-1.2.2.tgz") {
-		t.Fatalf("unexpected qqbot tarball url: %q", strategy.target)
+	if strategy.target != "@sliverp/qqbot@latest" {
+		t.Fatalf("unexpected qqbot package spec: %q", strategy.target)
 	}
 }
 
@@ -65,6 +65,23 @@ func TestInstallRecognizesTgzAsArchive(t *testing.T) {
 	url := "https://raw.githubusercontent.com/zhaoxinyi02/ClawPanel-Plugins/main/official/qqbot/qqbot-1.2.2.tgz"
 	if !(strings.HasSuffix(url, ".zip") || strings.HasSuffix(url, ".tar.gz") || strings.HasSuffix(url, ".tgz")) {
 		t.Fatalf("expected tgz url to be treated as archive")
+	}
+}
+
+func TestNormalizeNpmPackageName(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"@sliverp/qqbot@latest":          "@sliverp/qqbot",
+		"@openclaw/feishu":               "@openclaw/feishu",
+		"left-pad@1.3.0":                 "left-pad",
+		"@openclaw-china/wecom-app@next": "@openclaw-china/wecom-app",
+	}
+
+	for input, want := range tests {
+		if got := normalizeNpmPackageName(input); got != want {
+			t.Fatalf("normalizeNpmPackageName(%q) = %q, want %q", input, got, want)
+		}
 	}
 }
 

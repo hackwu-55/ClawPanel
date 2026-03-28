@@ -28,8 +28,17 @@ const (
 
 var officialFeishuPluginIDs = []string{"openclaw-lark", "feishu-openclaw-plugin"}
 
+var preferredPluginPackageSpecs = map[string]string{
+	"qqbot":         "@sliverp/qqbot@latest",
+	"feishu":        "@openclaw/feishu@latest",
+	"openclaw-lark": "@larksuite/openclaw-lark@latest",
+	"dingtalk":      "@largezhou/ddingtalk@latest",
+	"wecom":         "@wecom/wecom-openclaw-plugin@latest",
+	"wecom-app":     "@openclaw-china/wecom-app@latest",
+}
+
 var (
-	gitLookPath   = exec.LookPath
+	gitLookPath    = exec.LookPath
 	gitCloneRunner = runGitClone
 )
 
@@ -263,6 +272,9 @@ func resolvePluginInstallStrategy(regPlugin *RegistryPlugin, source string) plug
 	if regPlugin == nil {
 		return pluginInstallStrategy{}
 	}
+	if preferred := preferredPluginPackageSpec(regPlugin); preferred != "" {
+		return pluginInstallStrategy{kind: "npm", target: preferred}
+	}
 	if preferred := preferredPluginDownloadURL(regPlugin); preferred != "" {
 		return pluginInstallStrategy{kind: "download", target: preferred}
 	}
@@ -276,6 +288,13 @@ func resolvePluginInstallStrategy(regPlugin *RegistryPlugin, source string) plug
 		return pluginInstallStrategy{kind: "download", target: regPlugin.GitURL}
 	}
 	return pluginInstallStrategy{}
+}
+
+func preferredPluginPackageSpec(regPlugin *RegistryPlugin) string {
+	if regPlugin == nil {
+		return ""
+	}
+	return preferredPluginPackageSpecs[regPlugin.ID]
 }
 
 func preferredPluginDownloadURL(regPlugin *RegistryPlugin) string {
@@ -329,15 +348,16 @@ func (m *Manager) InstallWithProgress(pluginID string, source string, logf func(
 
 	strategy := resolvePluginInstallStrategy(regPlugin, source)
 	if strategy.kind == "npm" {
-		npmPkg := strategy.target
+		npmSpec := strategy.target
+		npmPkg := normalizeNpmPackageName(npmSpec)
 		if logf != nil {
-			logf(fmt.Sprintf("📦 优先尝试 OpenClaw 官方命令安装插件: %s", npmPkg))
+			logf(fmt.Sprintf("📦 优先尝试 OpenClaw 官方命令安装插件: %s", npmSpec))
 		}
-		if err := m.installViaOpenClawCLI(npmPkg, logf); err != nil {
+		if err := m.installViaOpenClawCLI(npmSpec, logf); err != nil {
 			if logf != nil {
 				logf(fmt.Sprintf("⚠️ 官方命令安装失败，回退到面板安装逻辑: %v", err))
 			}
-			if err := m.installFromNpm(npmPkg); err != nil {
+			if err := m.installFromNpm(npmSpec); err != nil {
 				return fmt.Errorf("官方命令安装失败，且 npm 回退安装失败: %v", err)
 			}
 		}
@@ -1324,12 +1344,12 @@ func cleanupChannelConfigForPlugin(ocConfig map[string]interface{}, pluginID str
 	}
 }
 
-func (m *Manager) installFromNpm(pkgName string) error {
-	cmd := exec.Command("npm", "install", "-g", pkgName+"@latest", "--registry=https://registry.npmmirror.com")
+func (m *Manager) installFromNpm(pkgSpec string) error {
+	cmd := exec.Command("npm", "install", "-g", pkgSpec, "--registry=https://registry.npmmirror.com")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		// Retry without mirror
-		cmd2 := exec.Command("npm", "install", "-g", pkgName+"@latest")
+		cmd2 := exec.Command("npm", "install", "-g", pkgSpec)
 		out2, err2 := cmd2.CombinedOutput()
 		if err2 != nil {
 			return fmt.Errorf("%s\n%s", string(out), string(out2))
@@ -1394,6 +1414,28 @@ func repoArchiveURLs(repoURL string) []string {
 	default:
 		return nil
 	}
+}
+
+func normalizeNpmPackageName(spec string) string {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return ""
+	}
+	if strings.HasPrefix(spec, "@") {
+		slash := strings.Index(spec, "/")
+		if slash < 0 || slash == len(spec)-1 {
+			return spec
+		}
+		rest := spec[slash+1:]
+		if at := strings.LastIndex(rest, "@"); at >= 0 {
+			return spec[:slash+1+at]
+		}
+		return spec
+	}
+	if at := strings.LastIndex(spec, "@"); at > 0 {
+		return spec[:at]
+	}
+	return spec
 }
 
 func runGitClone(gitURL, dest string) ([]byte, error) {

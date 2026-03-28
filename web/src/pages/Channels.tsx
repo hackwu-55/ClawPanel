@@ -330,7 +330,7 @@ const CHANNEL_DEFS: ChannelDef[] = [
     ] },
   { id: 'whatsapp', label: 'WhatsApp', description: 'Baileys QR扫码配对', type: 'builtin', loginMethods: ['qrcode'],
     configFields: [{ key: 'dmPolicy', label: 'DM策略', type: 'select', options: ['pairing','open','allowlist'] }] },
-  { id: 'telegram', label: 'Telegram', description: 'Telegram Bot 通道插件', type: 'plugin',
+  { id: 'telegram', label: 'Telegram', description: 'Telegram Bot 内置通道', type: 'builtin',
     configFields: [
       { key: 'botToken', label: 'Bot Token', type: 'password', placeholder: '123456:ABC-DEF...', help: '从 @BotFather 获取的 Telegram Bot Token' },
       { key: 'dmPolicy', label: '私聊准入策略', type: 'select', options: ['pairing', 'open', 'allowlist'], help: 'pairing = 首次私聊需配对批准；open = 所有私聊直接可用；allowlist = 仅白名单', defaultValue: 'open' },
