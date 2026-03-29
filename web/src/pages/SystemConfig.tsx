@@ -1785,6 +1785,9 @@ function ChangePasswordSection() {
 function PanelUpdateSection() {
   const [panelVersion, setPanelVersion] = useState('');
   const [edition, setEdition] = useState('pro');
+  const [panelBranch, setPanelBranch] = useState('');
+  const [panelCommit, setPanelCommit] = useState('');
+  const [panelBuildLabel, setPanelBuildLabel] = useState('');
   const [checkingPanel, setCheckingPanel] = useState(false);
   const [panelUpdateInfo, setPanelUpdateInfo] = useState<any>(null);
   const [navigating, setNavigating] = useState(false);
@@ -1797,6 +1800,9 @@ function PanelUpdateSection() {
       if (r.ok) {
         setPanelVersion(r.version);
         setEdition(r.edition || 'pro');
+        setPanelBranch(r.branch || '');
+        setPanelCommit(r.commit || '');
+        setPanelBuildLabel(r.buildLabel || '');
       }
     } catch {}
   };
@@ -1887,6 +1893,21 @@ function PanelUpdateSection() {
             <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">更新方式</p>
             <p className="text-xs text-gray-700 dark:text-gray-300 mt-1 font-medium">独立进程 · 自动回滚</p>
           </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="rounded-[18px] p-3 border border-blue-100/60 dark:border-blue-800/20 bg-white/60 dark:bg-slate-900/40 backdrop-blur-lg">
+          <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">当前分支</p>
+          <p className="text-sm font-bold text-gray-900 dark:text-white font-mono mt-1 break-all">{panelBranch || '-'}</p>
+        </div>
+        <div className="rounded-[18px] p-3 border border-blue-100/60 dark:border-blue-800/20 bg-white/60 dark:bg-slate-900/40 backdrop-blur-lg">
+          <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">构建标签</p>
+          <p className="text-sm font-bold text-gray-900 dark:text-white font-mono mt-1 break-all">{panelBuildLabel || '-'}</p>
+        </div>
+        <div className="rounded-[18px] p-3 border border-blue-100/60 dark:border-blue-800/20 bg-white/60 dark:bg-slate-900/40 backdrop-blur-lg">
+          <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">提交</p>
+          <p className="text-sm font-bold text-gray-900 dark:text-white font-mono mt-1">{panelCommit || '-'}</p>
         </div>
       </div>
 

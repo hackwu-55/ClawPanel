@@ -81,12 +81,15 @@ func GetVersion(cfg *config.Config) gin.HandlerFunc {
 }
 
 // GetPanelVersion 获取 ClawPanel 面板版本
-func GetPanelVersion(version string, edition string) gin.HandlerFunc {
+func GetPanelVersion(version string, edition string, branch string, commit string, label string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
-			"ok":      true,
-			"version": version,
-			"edition": edition,
+			"ok":         true,
+			"version":    version,
+			"edition":    edition,
+			"branch":     branch,
+			"commit":     commit,
+			"buildLabel": label,
 		})
 	}
 }

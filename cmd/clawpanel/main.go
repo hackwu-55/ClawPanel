@@ -317,7 +317,13 @@ func runServer(stopCh chan struct{}) {
 			auth.GET("/system/update-status", handler.UpdateStatus(cfg))
 
 			// ClawPanel 面板自检更新
-			auth.GET("/panel/version", handler.GetPanelVersion(buildinfo.Version, buildinfo.NormalizedEdition()))
+			auth.GET("/panel/version", handler.GetPanelVersion(
+				buildinfo.Version,
+				buildinfo.NormalizedEdition(),
+				buildinfo.NormalizedBranch(),
+				buildinfo.ShortCommit(),
+				buildinfo.BuildLabel(),
+			))
 			auth.GET("/panel/check-update", handler.CheckPanelUpdate(panelUpdater))
 			auth.POST("/panel/do-update", handler.DoPanelUpdate(panelUpdater))
 			auth.GET("/panel/update-progress", handler.PanelUpdateProgress(panelUpdater))
