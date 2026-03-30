@@ -139,7 +139,6 @@ if [ -f "$EXTRACT_DIR/bin/clawlite-openclaw" ]; then
   install -m755 "$EXTRACT_DIR/bin/clawlite-openclaw" "${INSTALL_DIR}/bin/clawlite-openclaw"
   log "clawlite-openclaw 已同步更新"
 fi
-chown root:root "${INSTALL_DIR}/${BIN_NAME}"
 
 log "启动服务..."
 systemctl start "$SERVICE_NAME"

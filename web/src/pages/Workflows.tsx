@@ -121,10 +121,10 @@ const DEFAULT_SETTINGS: WorkflowSettings = {
   providerId: '',
   modelId: '',
   approvalMode: 2,
-  progressMode: 'detailed',
+  progressMode: 'concise',
   tone: 'professional',
   autoCreateRuns: true,
-  pushProgress: true,
+  pushProgress: false,
   complexityGuard: 'balanced',
 };
 
@@ -876,7 +876,7 @@ export default function Workflows() {
                   <input type="checkbox" checked={settings.autoCreateRuns} onChange={e => setSettings(prev => ({ ...prev, autoCreateRuns: e.target.checked }))} />
                 </label>
                 <label className="page-modern-panel flex items-center justify-between px-4 py-3 text-sm">
-                  <span>同步推送进度到中心</span>
+                  <span>回写进度到原会话</span>
                   <input type="checkbox" checked={settings.pushProgress} onChange={e => setSettings(prev => ({ ...prev, pushProgress: e.target.checked }))} />
                 </label>
               </div>

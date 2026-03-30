@@ -9,8 +9,8 @@
 Go 单二进制 · React 18 · TailwindCSS · SQLite · WebSocket 实时推送 · 跨平台
 
 [![License](https://img.shields.io/badge/license-CC%20BY--NC--SA%204.0-red?style=flat-square)](LICENSE)
-[![Pro](https://img.shields.io/badge/Pro-5.3.0-violet?style=flat-square)](https://github.com/zhaoxinyi02/ClawPanel/releases)
-[![Lite](https://img.shields.io/badge/Lite-0.2.0-2563eb?style=flat-square)](https://github.com/zhaoxinyi02/ClawPanel/releases)
+[![Pro](https://img.shields.io/badge/Pro-5.3.1-violet?style=flat-square)](https://github.com/zhaoxinyi02/ClawPanel/releases)
+[![Lite](https://img.shields.io/badge/Lite-0.2.1-2563eb?style=flat-square)](https://github.com/zhaoxinyi02/ClawPanel/releases)
 [![Go](https://img.shields.io/badge/go-1.22+-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev)
 [![React](https://img.shields.io/badge/react-18-61DAFB?style=flat-square&logo=react&logoColor=white)](https://react.dev)
 [![CI](https://github.com/zhaoxinyi02/ClawPanel/actions/workflows/ci.yml/badge.svg)](https://github.com/zhaoxinyi02/ClawPanel/actions/workflows/ci.yml)
@@ -767,3 +767,15 @@ sc query ClawPanel
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=zhaoxinyi02/ClawPanel&type=date&legend=top-left)](https://www.star-history.com/#zhaoxinyi02/ClawPanel&type=date&legend=top-left)
+
+## Release Notes
+
+- Current stable release: `ClawPanel Pro v5.3.1`
+- Current Lite release: `ClawPanel Lite v0.2.1`
+- This release fixes stale update metadata, external OpenClaw gateway false-offline detection, NapCat login false negatives, Workflow progress spam in original chats, and Lite data directory ownership being reset during overwrite installs.
+
+## Docker Status
+
+- There is currently **no official ClawPanel Docker image** in this repository.
+- If your OpenClaw already runs in Docker or 1Panel, keep OpenClaw containerized and run `ClawPanel Pro` as a normal host binary.
+- Point `OPENCLAW_DIR` at the host path that contains `openclaw.json` so ClawPanel can manage that external instance.

@@ -797,9 +797,21 @@ func looksLikeOpenClawGatewayResponse(path string, statusCode int, headers http.
 	if strings.Contains(text, "openclaw control") || strings.Contains(text, "<openclaw-app") {
 		return true
 	}
+	if strings.Contains(text, "openclaw") && (strings.Contains(text, "gateway") || strings.Contains(text, "control")) {
+		return true
+	}
 	if path == "/health" || path == "/healthz" {
 		if statusCode >= 200 && statusCode < 500 {
 			if strings.Contains(contentType, "json") && (strings.Contains(text, "\"ok\":true") || strings.Contains(text, "\"status\":\"ok\"") || strings.Contains(text, "\"status\":\"live\"") || strings.Contains(text, "healthy") || strings.Contains(text, "openclaw")) {
+				return true
+			}
+			if strings.Contains(contentType, "text/plain") || contentType == "" {
+				plain := strings.TrimSpace(text)
+				if plain == "ok" || plain == "live" || plain == "healthy" || plain == "up" || strings.Contains(plain, "openclaw") {
+					return true
+				}
+			}
+			if statusCode >= 200 && statusCode < 400 && (strings.Contains(text, "ok") || strings.Contains(text, "healthy") || strings.Contains(text, "live")) {
 				return true
 			}
 		}

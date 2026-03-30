@@ -92,6 +92,22 @@ func TestLooksLikeOpenClawGatewayResponseRecognizesHealthJSON(t *testing.T) {
 	}
 }
 
+func TestLooksLikeOpenClawGatewayResponseRecognizesPlainTextHealth(t *testing.T) {
+	headers := http.Header{"Content-Type": []string{"text/plain; charset=utf-8"}}
+	body := []byte("OK")
+	if !looksLikeOpenClawGatewayResponse("/health", 200, headers, body) {
+		t.Fatalf("expected plain text health response to be recognized as OpenClaw gateway")
+	}
+}
+
+func TestLooksLikeOpenClawGatewayResponseRecognizesGatewayTextPage(t *testing.T) {
+	headers := http.Header{"Content-Type": []string{"text/html"}}
+	body := []byte("OpenClaw Gateway is running")
+	if !looksLikeOpenClawGatewayResponse("/", 200, headers, body) {
+		t.Fatalf("expected gateway text page to be recognized as OpenClaw gateway")
+	}
+}
+
 func TestGetStatusReportsExternallyManagedGateway(t *testing.T) {
 
 	openclawDir := newOpenClawDir(t)

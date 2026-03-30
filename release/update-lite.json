@@ -1,11 +1,11 @@
 {
-  "latest_version": "0.2.0",
-  "release_time": "2026-03-29T15:20:00+08:00",
-  "release_note": "## ClawPanel Lite v0.2.0\n\n- 同步新版登录页视觉与交互，统一 Lite 与主面板风格\n- 修复插件通道安装后 OpenClaw 不自动重启的问题\n- 收口最近活动、离线提示与通道状态展示，减少误判与重复告警",
+  "latest_version": "0.2.1",
+  "release_time": "2026-03-30T21:30:00+08:00",
+  "release_note": "## ClawPanel Lite v0.2.1\n\n- 修复更新元数据未同步导致 Lite 更新源仍指向旧版本的问题\n- 修复 Lite 覆盖安装时把整个安装目录重新改成 root 所有，导致数据目录权限被意外覆盖的问题\n- 同步 Workflow 回写降噪与 NapCat 登录态判定容错，减少未登录误判和消息刷屏",
   "download_urls": {
-    "linux_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.2.0/clawpanel-lite-core-v0.2.0-linux-amd64.tar.gz",
-    "darwin_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.2.0/clawpanel-lite-core-v0.2.0-darwin-amd64.tar.gz",
-    "darwin_arm64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.2.0/clawpanel-lite-core-v0.2.0-darwin-arm64.tar.gz"
+    "linux_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.2.1/clawpanel-lite-core-v0.2.1-linux-amd64.tar.gz",
+    "darwin_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.2.1/clawpanel-lite-core-v0.2.1-darwin-amd64.tar.gz",
+    "darwin_arm64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.2.1/clawpanel-lite-core-v0.2.1-darwin-arm64.tar.gz"
   },
   "major_change": false,
   "change_warning": ""

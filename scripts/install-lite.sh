@@ -216,15 +216,21 @@ log "下载完成 (${DOWNLOAD_SOURCE_ACTUAL})"
 
 step 3 $TOTAL_STEPS "部署 Lite 运行环境"
 systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
+DATA_OWNER=""
+if [[ -d "$INSTALL_DIR/data" ]] && command -v stat >/dev/null 2>&1; then
+  DATA_OWNER=$(stat -c '%u:%g' "$INSTALL_DIR/data" 2>/dev/null || true)
+fi
 rm -rf "$INSTALL_DIR"/*
 tar -xzf "$TMP_DIR/$PACKAGE_NAME" -C "$INSTALL_DIR"
-chown -R root:root "$INSTALL_DIR"
 chmod +x "$INSTALL_DIR/$BIN_NAME" "$INSTALL_DIR/bin/clawlite-openclaw"
 if [[ -f "$INSTALL_DIR/runtime/node/bin/node" ]]; then
   chmod +x "$INSTALL_DIR/runtime/node/bin/node"
 fi
 if [[ -f "$INSTALL_DIR/runtime/node/node" ]]; then
   chmod +x "$INSTALL_DIR/runtime/node/node"
+fi
+if [[ -n "$DATA_OWNER" ]] && [[ -d "$INSTALL_DIR/data" ]]; then
+  chown -R "$DATA_OWNER" "$INSTALL_DIR/data" 2>/dev/null || true
 fi
 ln -sf "$INSTALL_DIR/$BIN_NAME" /usr/local/bin/clawpanel-lite
 ln -sf "$INSTALL_DIR/bin/clawlite-openclaw" /usr/local/bin/clawlite-openclaw
