@@ -623,10 +623,13 @@ func (rt *workflowRuntime) sendWorkflowAck(channelID, conversationID, userID, me
 		if target == "" {
 			return fmt.Errorf("missing WeChat target")
 		}
-		_, err := wechatBridgeRequest(rt.cfg, http.MethodPost, "/send/text", map[string]interface{}{
-			"to":      target,
-			"content": message,
-			"isRoom":  strings.HasSuffix(target, "@chatroom"),
+		_, err := wechatBridgeRequest(rt.cfg, http.MethodPost, "/webhook/msg/v2", map[string]interface{}{
+			"to":     wechatRecipientPayload(target),
+			"isRoom": wechatRecipientIsRoom(target),
+			"data": map[string]interface{}{
+				"type":    "text",
+				"content": message,
+			},
 		})
 		return err
 	default:

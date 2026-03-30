@@ -180,17 +180,14 @@ func GetStatus(db *sql.DB, cfg *config.Config, procMgr *process.Manager, napcatM
 		}
 
 		wechatInfo := gin.H{"connected": false, "loggedIn": false}
-		if bridgeResp, err := wechatBridgeRequest(cfg, http.MethodGet, "/status", nil); err == nil {
-			if connected, ok := bridgeResp["connected"]; ok {
-				wechatInfo["connected"] = connected
-			}
-			if loggedIn, ok := bridgeResp["loggedIn"]; ok {
-				wechatInfo["loggedIn"] = loggedIn
-			}
-			for _, key := range []string{"name", "selfWxid", "contacts", "rooms", "version", "message"} {
-				if v, ok := bridgeResp[key]; ok {
-					wechatInfo[key] = v
-				}
+		if loggedIn, err := wechatBridgeHealth(cfg); err == nil {
+			wechatInfo["connected"] = true
+			wechatInfo["loggedIn"] = loggedIn
+			wechatInfo["version"] = "wechatbot-webhook Docker"
+			if loggedIn {
+				wechatInfo["message"] = "微信已登录"
+			} else {
+				wechatInfo["message"] = "微信未登录"
 			}
 		}
 

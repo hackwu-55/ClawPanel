@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api';
-import { Radio, Wifi, WifiOff, QrCode, Key, Zap, UserCheck, Check, X, Power, Loader2, RefreshCw, LogOut, Sparkles, Download, Package, Wrench, Search, Copy, CheckCircle, AlertTriangle, AlertCircle, Trash2, MessageSquare, Settings2 } from 'lucide-react';
+import { Radio, Wifi, WifiOff, QrCode, Key, Zap, UserCheck, Check, X, Power, Loader2, RefreshCw, LogOut, Sparkles, Download, Package, Wrench, Search, Copy, CheckCircle, AlertTriangle, AlertCircle, Trash2, MessageSquare, Settings2, ExternalLink } from 'lucide-react';
 import InfoTooltip from '../components/InfoTooltip';
 import { useI18n } from '../i18n';
 
@@ -65,6 +65,9 @@ type WechatBridgeState = {
   bridgeUrl?: string;
   bridgeToken?: string;
   kitDir?: string;
+  loginUrl?: string;
+  message?: string;
+  version?: string;
   error?: string;
 };
 
@@ -381,7 +384,7 @@ const CHANNEL_DEFS: ChannelDef[] = [
       { key: 'password', label: '密码', type: 'password' },
     ] },
   { id: 'webchat', label: 'WebChat', description: 'Gateway WebChat UI (内置)', type: 'builtin', configFields: [] },
-  { id: 'wechat-personal', label: '微信个人号 (WeChatFerry)', description: 'Windows 宿主机桥接，支持浏览器直接下载桥接包', type: 'builtin', configFields: [] },
+  { id: 'wechat-personal', label: '微信个人号', description: 'wechatbot-webhook Docker 托管，浏览器登录扫码', type: 'builtin', configFields: [] },
   // Plugin channels
   { id: 'feishu', label: '飞书 / Lark', description: '飞书机器人 WebSocket (插件)', type: 'plugin',
     configFields: [
@@ -1872,8 +1875,8 @@ export default function Channels() {
                     <MessageSquare size={20} />
                   </div>
                   <div>
-                    <h3 className="font-bold text-base text-gray-900 dark:text-white">微信个人号 (WeChatFerry)</h3>
-                    <p className="text-xs text-gray-500 mt-1">这里是主入口。桥接包会生成到服务器本地，同时支持浏览器直接下载 zip 到 Windows 宿主机。</p>
+                    <h3 className="font-bold text-base text-gray-900 dark:text-white">微信个人号</h3>
+                    <p className="text-xs text-gray-500 mt-1">这里是主入口。面板会在当前服务器里直接安装 wechatbot-webhook Docker 服务，你只需要打开登录页扫码。</p>
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-3 xl:justify-end">
@@ -1897,46 +1900,46 @@ export default function Channels() {
 
               <div className="grid gap-3 md:grid-cols-3">
                 <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-gray-50/70 dark:bg-gray-900/30 px-4 py-3">
-                  <div className="text-[11px] text-gray-500">桥接连接</div>
-                  <div className="mt-1 text-sm font-semibold text-gray-900 dark:text-white">{wechatBridgeStatus?.connected ? '桥接在线' : '桥接未连接'}</div>
+                  <div className="text-[11px] text-gray-500">服务连接</div>
+                  <div className="mt-1 text-sm font-semibold text-gray-900 dark:text-white">{wechatBridgeStatus?.connected ? '服务在线' : '服务未连接'}</div>
                 </div>
                 <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-gray-50/70 dark:bg-gray-900/30 px-4 py-3">
                   <div className="text-[11px] text-gray-500">微信登录</div>
                   <div className="mt-1 text-sm font-semibold text-gray-900 dark:text-white">{wechatBridgeStatus?.loggedIn ? (wechatBridgeStatus?.name || '已登录') : '未登录'}</div>
                 </div>
                 <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-gray-50/70 dark:bg-gray-900/30 px-4 py-3">
-                  <div className="text-[11px] text-gray-500">生成目录</div>
-                  <div className="mt-1 break-all font-mono text-[11px] text-gray-700 dark:text-gray-200">{wechatBridgeStatus?.kitDir || wechatBridgeConfig?.kitDir || '/opt/clawpanel/data/wechat-wcf-bridge'}</div>
+                  <div className="text-[11px] text-gray-500">安装目录</div>
+                  <div className="mt-1 break-all font-mono text-[11px] text-gray-700 dark:text-gray-200">{wechatBridgeStatus?.kitDir || wechatBridgeConfig?.kitDir || '/opt/clawpanel/data/wechatbot-webhook'}</div>
                 </div>
               </div>
 
               <div className="grid gap-4 md:grid-cols-2">
                 <label className="space-y-2 text-sm">
-                  <span className="font-medium text-gray-700 dark:text-gray-300">桥接地址</span>
+                  <span className="font-medium text-gray-700 dark:text-gray-300">服务地址</span>
                   <input
                     value={wechatBridgeConfig.bridgeUrl || ''}
                     onChange={e => setWechatBridgeConfig((prev: any) => ({ ...prev, bridgeUrl: e.target.value }))}
-                    placeholder="http://127.0.0.1:19088"
+                    placeholder="http://127.0.0.1:3002"
                     className="w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-100 dark:focus:ring-violet-900/30 focus:border-violet-500"
                   />
                 </label>
                 <label className="space-y-2 text-sm">
-                  <span className="font-medium text-gray-700 dark:text-gray-300">桥接 Token</span>
+                  <span className="font-medium text-gray-700 dark:text-gray-300">登录 Token</span>
                   <input
                     value={wechatBridgeConfig.bridgeToken || ''}
                     onChange={e => setWechatBridgeConfig((prev: any) => ({ ...prev, bridgeToken: e.target.value }))}
-                    placeholder="clawpanel-wcf"
+                    placeholder="clawpanel-wechat"
                     className="w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-100 dark:focus:ring-violet-900/30 focus:border-violet-500"
                   />
                 </label>
               </div>
 
               <div className="rounded-2xl border border-blue-100/70 bg-[linear-gradient(145deg,rgba(255,255,255,0.88),rgba(239,246,255,0.78))] px-4 py-4 text-sm text-gray-600 dark:border-blue-900/30 dark:bg-slate-900/50 dark:text-gray-300">
-                <div className="font-medium text-gray-900 dark:text-white">生成位置与使用方式</div>
+                <div className="font-medium text-gray-900 dark:text-white">安装位置与使用方式</div>
                 <div className="mt-2 space-y-1 text-xs leading-6">
-                  <div>桥接包默认生成在 <span className="font-mono">/opt/clawpanel/data/wechat-wcf-bridge</span>。</div>
-                  <div>会包含 <span className="font-mono">install-windows.ps1</span>、<span className="font-mono">start-bridge.bat</span>、<span className="font-mono">bridge.mjs</span> 和说明文件。</div>
-                  <div>先点“一键生成桥接包”，再点“浏览器下载桥接包”，就能直接把 zip 下载到你当前浏览器所在的 Windows 宿主机。</div>
+                  <div>服务默认安装在 <span className="font-mono">/opt/clawpanel/data/wechatbot-webhook</span>。</div>
+                  <div>会生成 <span className="font-mono">docker-compose.yml</span>、<span className="font-mono">.env</span> 和说明文件，容器名是 <span className="font-mono">openclaw-wechat</span>。</div>
+                  <div>先点“一键安装微信服务”，再点“打开登录页”，浏览器打开后直接扫码登录微信即可。</div>
                 </div>
               </div>
 
@@ -1953,14 +1956,23 @@ export default function Channels() {
                   className={`${modern ? 'page-modern-accent px-4 py-2 text-sm' : 'inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-xl bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 transition-all shadow-lg shadow-violet-200 dark:shadow-none hover:shadow-xl'}`}
                 >
                   {installingSw === 'wechat' ? <Loader2 size={14} className="animate-spin" /> : <Package size={14} />}
-                  {installingSw === 'wechat' ? '生成中...' : '一键生成桥接包'}
+                  {installingSw === 'wechat' ? '安装中...' : '一键安装微信服务'}
                 </button>
+                <a
+                  href={wechatBridgeStatus?.loginUrl || '#'}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={`${modern ? 'page-modern-action px-4 py-2 text-sm' : 'inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-xl bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-600 transition-all'} ${!wechatBridgeStatus?.loginUrl ? 'pointer-events-none opacity-50' : ''}`}
+                >
+                  <ExternalLink size={14} />
+                  打开登录页
+                </a>
                 <a
                   href={api.wechatBridgeDownloadUrl()}
                   className={`${modern ? 'page-modern-action px-4 py-2 text-sm' : 'inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-xl bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-600 transition-all'}`}
                 >
                   <Download size={14} />
-                  浏览器下载桥接包
+                  下载服务套件
                 </a>
                 <button
                   onClick={saveWechatBridgeConfig}

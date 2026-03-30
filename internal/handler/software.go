@@ -35,6 +35,72 @@ type SoftwareInfo struct {
 	Icon        string `json:"icon,omitempty"`
 }
 
+func buildWeChatWebhookInstallScript(cfg *config.Config) string {
+	kitDir := wechatBridgeKitDir(cfg)
+	wc := loadWechatConfigMap(cfg)
+	token := strings.TrimSpace(fmt.Sprint(wc["bridgeToken"]))
+	if token == "" {
+		token = defaultWechatBridgeToken
+	}
+	callbackURL := fmt.Sprintf("http://host.docker.internal:%d/api/wechat/callback?token=%s", cfg.Port, token)
+	compose := fmt.Sprintf(`services:
+  openclaw-wechat:
+    image: dannicool/docker-wechatbot-webhook:latest
+    container_name: openclaw-wechat
+    restart: unless-stopped
+    ports:
+      - "3002:3001"
+    volumes:
+      - %s/log:/app/log
+      - %s/data:/app/data
+    environment:
+      LOG_LEVEL: info
+      RECVD_MSG_API: %s
+      ACCEPT_RECVD_MSG_MYSELF: "false"
+      LOGIN_API_TOKEN: %s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+`, kitDir, kitDir, callbackURL, token)
+	envFile := fmt.Sprintf("WECHAT_TOKEN=%s\nLOGIN_API_TOKEN=%s\nWECHAT_URL=http://127.0.0.1:3002\nRECVD_MSG_API=%s\n", token, token, callbackURL)
+	readme := fmt.Sprintf("ClawPanel 私有 wechatbot-webhook 套件\n\n1. 这套微信个人号直接跑在当前服务器 Docker 中，不需要 Windows 宿主机桥接。\n2. 面板点击“一键安装”后会在这里生成 docker-compose.yml 和 .env：\n   %s\n3. 安装完成后，回到“通道管理 -> 微信个人号”点击“打开登录页”。\n4. 浏览器会打开：\n   http://127.0.0.1:3002/login?token=%s\n   在该页扫码登录微信。\n5. 登录完成后，面板状态会自动变成“已登录”，收消息会通过 RECVD_MSG_API 回调到 ClawPanel。\n\n如果容器异常，可手动执行：\n  cd %s\n  docker compose logs -f\n", kitDir, token, kitDir)
+	return fmt.Sprintf(`
+set -e
+KIT_DIR=%q
+mkdir -p "$KIT_DIR" "$KIT_DIR/log" "$KIT_DIR/data"
+cat > "$KIT_DIR/docker-compose.yml" <<'EOF'
+%s
+EOF
+cat > "$KIT_DIR/README.txt" <<'EOF'
+%s
+EOF
+cat > "$KIT_DIR/.env" <<'EOF'
+%s
+EOF
+chmod 0644 "$KIT_DIR/docker-compose.yml" "$KIT_DIR/README.txt" "$KIT_DIR/.env"
+if ! command -v docker >/dev/null 2>&1; then
+  echo "❌ 未检测到 Docker，请先安装 Docker"
+  exit 1
+fi
+if docker compose version >/dev/null 2>&1; then
+  DC='docker compose'
+elif command -v docker-compose >/dev/null 2>&1; then
+  DC='docker-compose'
+else
+  echo "❌ 未检测到 docker compose，请先安装 Docker Compose"
+  exit 1
+fi
+echo "📦 正在拉取 wechatbot-webhook 镜像..."
+docker pull dannicool/docker-wechatbot-webhook:latest
+echo "🚀 正在启动微信个人号服务..."
+cd "$KIT_DIR"
+sh -c "$DC down --remove-orphans || true"
+sh -c "$DC up -d"
+echo "✅ 已完成 wechatbot-webhook Docker 安装"
+echo "📁 目录: $KIT_DIR"
+echo "➡️ 请在面板中点击“打开登录页”并扫码登录： http://127.0.0.1:3002/login?token=%s"
+`, kitDir, compose, readme, envFile, token)
+}
+
 type QQChannelState struct {
 	PluginInstalled bool   `json:"pluginInstalled"`
 	NapCatInstalled bool   `json:"napcatInstalled"`
@@ -416,23 +482,28 @@ func GetSoftwareList(cfg *config.Config) gin.HandlerFunc {
 			Status: napcatStatus, Category: "container", Icon: "message-circle",
 		})
 
-		// WeChat Ferry Bridge
+		// WeChat personal account via wechatbot-webhook
 		wechatCfg := loadWechatConfigMap(cfg)
-		wechatExists := strings.TrimSpace(fmt.Sprint(wechatCfg["bridgeUrl"])) != ""
+		wechatExists := false
 		wechatStatus := "not_installed"
 		wechatVer := ""
-		if wechatExists {
-			wechatVer = "WeChatFerry Bridge"
-			wechatStatus = "installed"
-			if statusResp, err := wechatBridgeRequest(cfg, http.MethodGet, "/status", nil); err == nil {
-				wechatStatus = "running"
-				if version := strings.TrimSpace(fmt.Sprint(statusResp["version"])); version != "" {
-					wechatVer = version
+		if runtime.GOOS != "windows" {
+			wechatExists, wechatStatus = getDockerContainerStatus("openclaw-wechat")
+			if wechatExists {
+				wechatVer = "wechatbot-webhook Docker"
+				if loggedIn, err := wechatBridgeHealth(cfg); err == nil {
+					wechatStatus = "running"
+					if !loggedIn {
+						wechatStatus = "installed"
+					}
 				}
 			}
+		} else if strings.TrimSpace(fmt.Sprint(wechatCfg["bridgeUrl"])) != "" {
+			wechatExists = true
+			wechatStatus = "installed"
 		}
 		list = append(list, SoftwareInfo{
-			ID: "wechat", Name: "微信个人号", Description: "Windows 宿主机 WeChatFerry Bridge",
+			ID: "wechat", Name: "微信个人号", Description: "wechatbot-webhook Docker 服务",
 			Version: wechatVer, Installed: wechatExists, Installable: true,
 			Status: wechatStatus, Category: "service", Icon: "message-square",
 		})
@@ -1897,7 +1968,7 @@ echo "✅ 全部完成"
 
 		case "wechat":
 			taskName = "安装微信机器人"
-			script = buildWeChatInstallScript(cfg)
+			script = buildWeChatWebhookInstallScript(cfg)
 
 		default:
 			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "不支持的软件: " + req.Software})
@@ -2461,7 +2532,6 @@ async function refreshState() {
     state.rooms = Array.isArray(rooms) ? rooms.length : 0;
   } catch {}
 }
-
 agent.on("login", async (user) => {
   state.connected = true;
   state.loggedIn = true;

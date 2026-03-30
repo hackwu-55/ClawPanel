@@ -18,6 +18,10 @@ func wechatBridgeAuthorized(cfg *config.Config, c *gin.Context) bool {
 	if expected == "" {
 		expected = defaultWechatBridgeToken
 	}
+	queryToken := strings.TrimSpace(c.Query("token"))
+	if queryToken != "" {
+		return queryToken == expected
+	}
 	auth := strings.TrimSpace(c.GetHeader("Authorization"))
 	if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
 		auth = strings.TrimSpace(auth[7:])
@@ -56,7 +60,41 @@ func wechatBridgeBool(raw map[string]interface{}, keys ...string) bool {
 	return false
 }
 
+func wechatSourceName(raw interface{}) string {
+	obj, ok := raw.(map[string]interface{})
+	if !ok || obj == nil {
+		return ""
+	}
+	if payload, ok := obj["payload"].(map[string]interface{}); ok && payload != nil {
+		for _, key := range []string{"name", "topic", "alias", "id"} {
+			if v := strings.TrimSpace(toString(payload[key])); v != "" {
+				return v
+			}
+		}
+	}
+	for _, key := range []string{"name", "topic", "alias", "id"} {
+		if v := strings.TrimSpace(toString(obj[key])); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 func normalizeWechatInboundPayload(raw map[string]interface{}) map[string]interface{} {
+	source, _ := raw["source"].(map[string]interface{})
+	roomLabel := ""
+	senderLabel := ""
+	if source != nil {
+		if room := source["room"]; room != nil {
+			switch v := room.(type) {
+			case string:
+				roomLabel = strings.TrimSpace(v)
+			default:
+				roomLabel = wechatSourceName(v)
+			}
+		}
+		senderLabel = wechatSourceName(source["from"])
+	}
 	payload := map[string]interface{}{
 		"event":   strings.TrimSpace(wechatBridgeString(raw, "event", "type")),
 		"talker":  strings.TrimSpace(wechatBridgeString(raw, "talker", "roomId", "roomid", "strTalker", "from")),
@@ -64,6 +102,13 @@ func normalizeWechatInboundPayload(raw map[string]interface{}) map[string]interf
 		"content": strings.TrimSpace(wechatBridgeString(raw, "content", "strContent", "text")),
 		"isRoom":  wechatBridgeBool(raw, "isRoom"),
 		"isSelf":  wechatBridgeBool(raw, "isSelf", "isSender", "self"),
+	}
+	if roomLabel != "" {
+		payload["talker"] = "room:" + roomLabel
+		payload["isRoom"] = true
+	}
+	if senderLabel != "" {
+		payload["sender"] = "user:" + senderLabel
 	}
 	if payload["event"] == "" {
 		payload["event"] = "message"
@@ -132,15 +177,37 @@ func WechatBridgeCallback(db *sql.DB, hub *ws.Hub, rt *workflowRuntime, cfg *con
 			c.JSON(http.StatusUnauthorized, gin.H{"ok": false, "error": "unauthorized"})
 			return
 		}
-		var raw map[string]interface{}
-		if err := c.ShouldBindJSON(&raw); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
-			return
+		raw := map[string]interface{}{}
+		contentType := strings.ToLower(strings.TrimSpace(c.ContentType()))
+		if strings.Contains(contentType, "json") {
+			if err := c.ShouldBindJSON(&raw); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": err.Error()})
+				return
+			}
+		} else {
+			raw["type"] = c.PostForm("type")
+			raw["content"] = c.PostForm("content")
+			raw["isMentioned"] = c.PostForm("isMentioned")
+			raw["isMsgFromSelf"] = c.PostForm("isMsgFromSelf")
+			raw["isSystemEvent"] = c.PostForm("isSystemEvent")
+			if sourceJSON := strings.TrimSpace(c.PostForm("source")); sourceJSON != "" {
+				var source map[string]interface{}
+				if err := json.Unmarshal([]byte(sourceJSON), &source); err == nil {
+					raw["source"] = source
+				} else {
+					raw["sourceRaw"] = sourceJSON
+				}
+			}
+			if file, err := c.FormFile("content"); err == nil && file != nil {
+				raw["content"] = "[文件] " + strings.TrimSpace(file.Filename)
+			}
 		}
 		payload := normalizeWechatInboundPayload(raw)
 		eventType := strings.TrimSpace(toString(payload["event"]))
-		if eventType != "message" {
-			c.JSON(http.StatusOK, gin.H{"ok": true, "ignored": true, "reason": "non_message"})
+		switch eventType {
+		case "system_event_login", "system_event_logout", "system_event_error", "system_event_push_notify":
+			appendWechatEvent(db, hub, "wechat", eventType, "微信系统事件", strings.TrimSpace(toString(payload["content"])))
+			c.JSON(http.StatusOK, gin.H{"success": true})
 			return
 		}
 		talker := strings.TrimSpace(toString(payload["talker"]))
@@ -160,7 +227,7 @@ func WechatBridgeCallback(db *sql.DB, hub *ws.Hub, rt *workflowRuntime, cfg *con
 		if sender != "" {
 			summary += " · " + sender
 		}
-		appendWechatEvent(db, hub, "wechat", "message", summary, content)
+		appendWechatEvent(db, hub, "wechat", eventType, summary, content)
 
 		if !isSelf && rt != nil && strings.TrimSpace(content) != "" {
 			conversationID := talker
@@ -175,14 +242,20 @@ func WechatBridgeCallback(db *sql.DB, hub *ws.Hub, rt *workflowRuntime, cfg *con
 				"provider": "wechat",
 			}
 			handled, reply, reason := rt.interceptInboundMessage("wechat", conversationID, sender, content, extra)
-			c.JSON(http.StatusOK, gin.H{
-				"ok":      true,
-				"handled": handled,
-				"reply":   reply,
-				"reason":  reason,
-			})
+			if handled && strings.TrimSpace(reply) != "" {
+				c.JSON(http.StatusOK, gin.H{
+					"success": true,
+					"data": gin.H{
+						"type":    "text",
+						"content": reply,
+					},
+					"reason": reason,
+				})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"success": true, "handled": handled, "reason": reason})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"ok": true, "handled": false})
+		c.JSON(http.StatusOK, gin.H{"success": true, "handled": false})
 	}
 }

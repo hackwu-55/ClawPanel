@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,8 +24,8 @@ import (
 )
 
 const (
-	defaultWechatBridgeURL   = "http://127.0.0.1:19088"
-	defaultWechatBridgeToken = "clawpanel-wcf"
+	defaultWechatBridgeURL   = "http://127.0.0.1:3002"
+	defaultWechatBridgeToken = "clawpanel-wechat"
 )
 
 // === Admin Config ===
@@ -684,12 +685,12 @@ func restartNapCatProcess(cfg *config.Config) {
 // === WeChat API ===
 
 func wechatBridgeKitDir(cfg *config.Config) string {
-	return filepath.Join(cfg.DataDir, "wechat-wcf-bridge")
+	return filepath.Join(cfg.DataDir, "wechatbot-webhook")
 }
 
 func normalizeWechatConfig(cfg *config.Config, raw map[string]interface{}) map[string]interface{} {
 	out := map[string]interface{}{
-		"mode":        "wcferry",
+		"mode":        "wechatbot-webhook",
 		"bridgeUrl":   defaultWechatBridgeURL,
 		"bridgeToken": defaultWechatBridgeToken,
 		"kitDir":      wechatBridgeKitDir(cfg),
@@ -718,12 +719,25 @@ func loadWechatConfigMap(cfg *config.Config) map[string]interface{} {
 	return normalizeWechatConfig(cfg, map[string]interface{}{})
 }
 
-func wechatBridgeRequest(cfg *config.Config, method, path string, body interface{}) (map[string]interface{}, error) {
+func wechatBridgeURL(cfg *config.Config, path string) string {
 	wc := loadWechatConfigMap(cfg)
 	baseURL := strings.TrimRight(fmt.Sprint(wc["bridgeUrl"]), "/")
 	if baseURL == "" {
 		baseURL = defaultWechatBridgeURL
 	}
+	targetURL := baseURL + path
+	token := strings.TrimSpace(fmt.Sprint(wc["bridgeToken"]))
+	if token == "" {
+		return targetURL
+	}
+	sep := "?"
+	if strings.Contains(targetURL, "?") {
+		sep = "&"
+	}
+	return targetURL + sep + "token=" + url.QueryEscape(token)
+}
+
+func wechatBridgeRequest(cfg *config.Config, method, path string, body interface{}) (map[string]interface{}, error) {
 	var bodyReader io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -732,14 +746,11 @@ func wechatBridgeRequest(cfg *config.Config, method, path string, body interface
 		}
 		bodyReader = bytes.NewReader(data)
 	}
-	req, err := http.NewRequest(method, baseURL+path, bodyReader)
+	req, err := http.NewRequest(method, wechatBridgeURL(cfg, path), bodyReader)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if token := strings.TrimSpace(fmt.Sprint(wc["bridgeToken"])); token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -766,29 +777,76 @@ func wechatBridgeRequest(cfg *config.Config, method, path string, body interface
 	return result, nil
 }
 
+func wechatBridgeHealth(cfg *config.Config) (bool, error) {
+	req, err := http.NewRequest(http.MethodGet, wechatBridgeURL(cfg, "/healthz"), nil)
+	if err != nil {
+		return false, err
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	statusText := strings.TrimSpace(strings.ToLower(string(data)))
+	if resp.StatusCode >= 400 {
+		if statusText == "" {
+			statusText = resp.Status
+		}
+		return false, fmt.Errorf("%s", statusText)
+	}
+	return statusText == "healthy", nil
+}
+
+func wechatRecipientPayload(target string) interface{} {
+	target = strings.TrimSpace(target)
+	if strings.HasPrefix(strings.ToLower(target), "alias:") {
+		return map[string]string{"alias": strings.TrimSpace(target[len("alias:"):])}
+	}
+	if strings.HasPrefix(strings.ToLower(target), "user:") {
+		return strings.TrimSpace(target[len("user:"):])
+	}
+	if strings.HasPrefix(strings.ToLower(target), "room:") {
+		return strings.TrimSpace(target[len("room:"):])
+	}
+	return target
+}
+
+func wechatRecipientIsRoom(target string) bool {
+	target = strings.TrimSpace(strings.ToLower(target))
+	return strings.HasPrefix(target, "room:") || strings.HasSuffix(target, "@chatroom")
+}
+
 func WechatStatus(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		wc := loadWechatConfigMap(cfg)
+		loginURL := wechatBridgeURL(cfg, "/login")
 		resp := gin.H{
 			"ok":         true,
 			"mode":       wc["mode"],
 			"bridgeUrl":  wc["bridgeUrl"],
 			"kitDir":     wc["kitDir"],
 			"configured": strings.TrimSpace(fmt.Sprint(wc["bridgeUrl"])) != "",
+			"loginUrl":   loginURL,
 			"connected":  false,
 			"loggedIn":   false,
-			"name":       "",
+			"name":       "wechatbot-webhook",
+			"version":    "wechatbot-webhook Docker",
 		}
-		bridgeResp, err := wechatBridgeRequest(cfg, http.MethodGet, "/status", nil)
+		loggedIn, err := wechatBridgeHealth(cfg)
 		if err != nil {
 			resp["error"] = err.Error()
+			resp["message"] = "微信服务未连接"
 			c.JSON(http.StatusOK, resp)
 			return
 		}
-		for _, key := range []string{"connected", "loggedIn", "name", "selfWxid", "contacts", "rooms", "version", "message"} {
-			if v, ok := bridgeResp[key]; ok {
-				resp[key] = v
-			}
+		resp["connected"] = true
+		resp["loggedIn"] = loggedIn
+		if loggedIn {
+			resp["message"] = "微信已登录"
+		} else {
+			resp["message"] = "微信未登录，请打开登录地址扫码"
 		}
 		c.JSON(http.StatusOK, resp)
 	}
@@ -799,7 +857,7 @@ func WechatLoginUrl(cfg *config.Config) gin.HandlerFunc {
 		wc := loadWechatConfigMap(cfg)
 		c.JSON(http.StatusOK, gin.H{
 			"ok":          true,
-			"externalUrl": wc["bridgeUrl"],
+			"externalUrl": wechatBridgeURL(cfg, "/login"),
 			"internalUrl": "",
 			"mode":        wc["mode"],
 			"kitDir":      wc["kitDir"],
@@ -811,12 +869,9 @@ func WechatBridgeDownload(cfg *config.Config) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		kitDir := wechatBridgeKitDir(cfg)
 		requiredFiles := []string{
-			"package.json",
-			"bridge.mjs",
-			"install-windows.ps1",
-			"start-bridge.bat",
+			"docker-compose.yml",
+			".env",
 			"README.txt",
-			".env.example",
 		}
 		for _, name := range requiredFiles {
 			if _, err := os.Stat(filepath.Join(kitDir, name)); err != nil {
@@ -868,7 +923,7 @@ func WechatBridgeDownload(cfg *config.Config) gin.HandlerFunc {
 		}
 
 		c.Header("Content-Type", "application/zip")
-		c.Header("Content-Disposition", `attachment; filename="wechat-wcf-bridge.zip"`)
+		c.Header("Content-Disposition", `attachment; filename="wechatbot-webhook-kit.zip"`)
 		c.Header("Content-Length", fmt.Sprintf("%d", buf.Len()))
 		c.Data(http.StatusOK, "application/zip", buf.Bytes())
 	}
@@ -890,11 +945,13 @@ func WechatSend(cfg *config.Config) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "to and content are required"})
 			return
 		}
-		resp, err := wechatBridgeRequest(cfg, http.MethodPost, "/send/text", gin.H{
-			"to":            strings.TrimSpace(body.To),
-			"content":       body.Content,
-			"isRoom":        body.IsRoom,
-			"mentionIdList": body.MentionIdList,
+		resp, err := wechatBridgeRequest(cfg, http.MethodPost, "/webhook/msg/v2", gin.H{
+			"to":     wechatRecipientPayload(body.To),
+			"isRoom": body.IsRoom || wechatRecipientIsRoom(body.To),
+			"data": gin.H{
+				"type":    "text",
+				"content": body.Content,
+			},
 		})
 		if err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"ok": false, "error": err.Error()})
@@ -920,11 +977,21 @@ func WechatSendFile(cfg *config.Config) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"ok": false, "error": "to and fileUrl are required"})
 			return
 		}
-		resp, err := wechatBridgeRequest(cfg, http.MethodPost, "/send/file", gin.H{
-			"to":       strings.TrimSpace(body.To),
-			"fileUrl":  strings.TrimSpace(body.FileURL),
-			"fileName": strings.TrimSpace(body.FileName),
-			"isRoom":   body.IsRoom,
+		fileURL := strings.TrimSpace(body.FileURL)
+		if alias := strings.TrimSpace(body.FileName); alias != "" {
+			sep := "?"
+			if strings.Contains(fileURL, "?") {
+				sep = "&"
+			}
+			fileURL = fileURL + sep + "$alias=" + url.QueryEscape(alias)
+		}
+		resp, err := wechatBridgeRequest(cfg, http.MethodPost, "/webhook/msg/v2", gin.H{
+			"to":     wechatRecipientPayload(body.To),
+			"isRoom": body.IsRoom || wechatRecipientIsRoom(body.To),
+			"data": gin.H{
+				"type":    "fileUrl",
+				"content": fileURL,
+			},
 		})
 		if err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"ok": false, "error": err.Error()})
