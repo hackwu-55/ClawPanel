@@ -29,7 +29,7 @@ Go Single Binary · React 18 · TailwindCSS · SQLite · WebSocket Real-time · 
 
 > [!NOTE]
 > [!NOTE]
-> **v5.3.4 / v0.2.4 Update** — panel self-update now stages release metadata and binaries through a local mirror before replacement, public install/update/repair/uninstall scripts are unified behind `CLAWPANEL_PUBLIC_BASE`, and updates now require `checksums.txt` + SHA256 verification. See [changelogs/v5.3.4.md](changelogs/v5.3.4.md) and [changelogs/lite-v0.2.4.md](changelogs/lite-v0.2.4.md)
+> **v5.3.5 / v0.2.5 Update** — this follow-up release fixes the Lite packaging pipeline, bumps the bundled OpenClaw runtime to `2026.4.5`, and makes Lite packaging fall back to the official npm registry when `npmmirror` is missing tarballs. See [changelogs/v5.3.5.md](changelogs/v5.3.5.md) and [changelogs/lite-v0.2.5.md](changelogs/lite-v0.2.5.md)
 
 > [!NOTE]
 > **v5.0.4 New** — 🔧 NapCat one-click diagnose & repair, system diagnostic report, QR login auto-detect & auto-close, disabled auto-login, container auto-restart after install, PATH detection fix. [View changelog](changelogs/v5.0.4.md)

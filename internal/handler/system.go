@@ -33,7 +33,7 @@ func GetVersion(cfg *config.Config) gin.HandlerFunc {
 				currentVersion = detectOpenClawVersion(cfg)
 			}
 			if currentVersion == "unknown" || currentVersion == "" {
-				currentVersion = "2026.2.26"
+				currentVersion = pinnedOpenClawVersion
 			}
 			c.JSON(http.StatusOK, gin.H{
 				"ok":              true,

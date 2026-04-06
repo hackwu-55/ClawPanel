@@ -1,11 +1,11 @@
 {
-  "latest_version": "0.2.4",
-  "release_time": "2026-04-06T23:59:00+08:00",
-  "release_note": "## ClawPanel Lite v0.2.4\n\n- Lite 更新链路改为先同步到本机更新镜像，再从本机缓存完成替换，降低停服后网络抖动带来的失败概率\n- 安装、更新、修复与卸载脚本统一收口到 `CLAWPANEL_PUBLIC_BASE`，后续迁移服务器时无需批量替换地址\n- 更新流程现在强制要求 `checksums.txt` 与 SHA256 校验，不再接受无校验更新",
+  "latest_version": "0.2.5",
+  "release_time": "2026-04-06T23:59:30+08:00",
+  "release_note": "## ClawPanel Lite v0.2.5\n\n- Lite 内嵌 OpenClaw runtime 默认版本提升到 2026.4.5\n- Lite 打包脚本在 npmmirror 缺包时会自动回退到官方 npm registry，避免 Release Build 因镜像 404 失败\n- 保持本机更新镜像、CLAWPANEL_PUBLIC_BASE 与强制 SHA256 校验链路不变",
   "download_urls": {
-    "linux_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.2.4/clawpanel-lite-core-v0.2.4-linux-amd64.tar.gz",
-    "darwin_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.2.4/clawpanel-lite-core-v0.2.4-darwin-amd64.tar.gz",
-    "darwin_arm64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.2.4/clawpanel-lite-core-v0.2.4-darwin-arm64.tar.gz"
+    "linux_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.2.5/clawpanel-lite-core-v0.2.5-linux-amd64.tar.gz",
+    "darwin_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.2.5/clawpanel-lite-core-v0.2.5-darwin-amd64.tar.gz",
+    "darwin_arm64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.2.5/clawpanel-lite-core-v0.2.5-darwin-arm64.tar.gz"
   },
   "major_change": false,
   "change_warning": ""

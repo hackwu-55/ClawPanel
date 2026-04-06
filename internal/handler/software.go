@@ -20,7 +20,7 @@ import (
 	"github.com/zhaoxinyi02/ClawPanel/internal/taskman"
 )
 
-const pinnedOpenClawVersion = "2026.2.26"
+const pinnedOpenClawVersion = "2026.4.5"
 
 // SoftwareInfo 软件信息
 type SoftwareInfo struct {
@@ -324,7 +324,7 @@ func GetSoftwareList(cfg *config.Config) gin.HandlerFunc {
 		if cfg.IsLiteEdition() {
 			ocVer := detectOpenClawVersion(cfg)
 			if strings.TrimSpace(ocVer) == "" || ocVer == "installed" {
-				ocVer = "2026.2.26"
+				ocVer = pinnedOpenClawVersion
 			}
 			list = append(list, SoftwareInfo{
 				ID: "openclaw", Name: "OpenClaw", Description: "Lite 内嵌 AI 助手核心引擎",
