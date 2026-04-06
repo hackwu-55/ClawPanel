@@ -1,13 +1,13 @@
 {
-  "latest_version": "5.3.3",
-  "release_time": "2026-03-31T23:59:00+08:00",
-  "release_note": "## ClawPanel Pro v5.3.3\n\n- 企业微信（智能机器人）现支持在同一页面切换 URL 回调与长连接两种接入方式\n- 修复官方插件通道在 ClawHub 429 限流下的安装链路：会自动回退到本地 tarball 再交给 OpenClaw 安装\n- 修复企业微信机器人插件 ID 与历史 entry 不一致导致的识别、启停和保存配置问题",
+  "latest_version": "5.3.4",
+  "release_time": "2026-04-06T23:59:00+08:00",
+  "release_note": "## ClawPanel Pro v5.3.4\n\n- 更新链路改为先同步到本机更新镜像，再从本机缓存完成替换，降低停服后网络抖动带来的失败概率\n- 安装、更新、修复与卸载脚本统一收口到 `CLAWPANEL_PUBLIC_BASE`，后续迁移服务器时无需批量替换地址\n- 更新流程现在强制要求 `checksums.txt` 与 SHA256 校验，不再接受无校验更新",
   "download_urls": {
-    "linux_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.3.3/clawpanel-v5.3.3-linux-amd64",
-    "linux_arm64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.3.3/clawpanel-v5.3.3-linux-arm64",
-    "darwin_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.3.3/clawpanel-v5.3.3-darwin-amd64",
-    "darwin_arm64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.3.3/clawpanel-v5.3.3-darwin-arm64",
-    "windows_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.3.3/clawpanel-v5.3.3-windows-amd64.exe"
+    "linux_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.3.4/clawpanel-v5.3.4-linux-amd64",
+    "linux_arm64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.3.4/clawpanel-v5.3.4-linux-arm64",
+    "darwin_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.3.4/clawpanel-v5.3.4-darwin-amd64",
+    "darwin_arm64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.3.4/clawpanel-v5.3.4-darwin-arm64",
+    "windows_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.3.4/clawpanel-v5.3.4-windows-amd64.exe"
   },
   "major_change": false,
   "change_warning": ""
