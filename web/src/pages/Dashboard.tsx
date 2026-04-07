@@ -47,7 +47,7 @@ function DashboardPage({ logEntries, refreshLog }: DashboardProps) {
   const [autoScroll, setAutoScroll] = useState(true);
   const logRef = useRef<HTMLDivElement>(null);
   const [sessionActivity, setSessionActivity] = useState<SessionActivityItem[]>([]);
-  const [services, setServices] = useState<{name:string;port:string;running:boolean;pid?:number}[]>([]);
+  const [services, setServices] = useState<{name:string;port:number;running:boolean;pid?:number}[]>([]);
   const [servicesLoading, setServicesLoading] = useState<Record<string,boolean>>({});
 
   useEffect(() => {

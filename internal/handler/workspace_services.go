@@ -15,20 +15,20 @@ import (
 )
 
 const (
-	maigePort       = "8765"
-	chromeRemotePort = "9223"
+	maigePort       = 8765
+	chromeRemotePort = 9223
 )
 
 type serviceStatus struct {
 	Name    string `json:"name"`
-	Port    string `json:"port"`
+	Port    int    `json:"port"`
 	Running bool   `json:"running"`
 	PID     int    `json:"pid,omitempty"`
 }
 
-func isPortListening(port string) bool {
+func isServicePortListening(port int) bool {
 	for _, host := range []string{"127.0.0.1", "localhost", "0.0.0.0", "::1"} {
-		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 300e6)
+		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, fmt.Sprintf("%d", port)), 300e6)
 		if err == nil {
 			conn.Close()
 			return true
@@ -37,8 +37,8 @@ func isPortListening(port string) bool {
 	return false
 }
 
-func getServicePID(port string) int {
-	portHex := fmt.Sprintf("%04X", portToHex(port))
+func getServicePID(port int) int {
+	portHex := fmt.Sprintf("%04X", port)
 	data, err := os.ReadFile("/proc/net/tcp")
 	if err != nil {
 		return 0
@@ -53,7 +53,6 @@ func getServicePID(port string) int {
 		if !strings.HasSuffix(localAddr, ":"+portHex) {
 			continue
 		}
-		// 匹配任意本地 IP (00000000 = 0.0.0.0, 0100007F = 127.0.0.1 等)
 		inode = fields[9]
 		break
 	}
@@ -84,17 +83,12 @@ func getServicePID(port string) int {
 	return 0
 }
 
-func portToHex(port string) int {
-	i, _ := strconv.Atoi(port)
-	return i
-}
-
 // GetServicesStatus 返回 maige ws 和 chrome remote 的状态
 func GetServicesStatus() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		services := []serviceStatus{
-			{Name: "maige-ws", Port: maigePort, Running: isPortListening(maigePort)},
-			{Name: "chrome-remote", Port: chromeRemotePort, Running: isPortListening(chromeRemotePort)},
+			{Name: "maige-ws", Port: maigePort, Running: isServicePortListening(maigePort)},
+			{Name: "chrome-remote", Port: chromeRemotePort, Running: isServicePortListening(chromeRemotePort)},
 		}
 		for i := range services {
 			if services[i].Running {
@@ -121,7 +115,7 @@ func StartService() gin.HandlerFunc {
 			port = chromeRemotePort
 		}
 
-		if isPortListening(port) {
+		if isServicePortListening(port) {
 			c.JSON(http.StatusOK, gin.H{"ok": true, "message": "服务已在运行"})
 			return
 		}
@@ -143,12 +137,8 @@ func StartService() gin.HandlerFunc {
 		}
 
 		// 等待服务就绪
-		port := maigePort
-		if body.Name == "chrome-remote" {
-			port = chromeRemotePort
-		}
 		for i := 0; i < 10; i++ {
-			if isPortListening(port) {
+			if isServicePortListening(port) {
 				c.JSON(http.StatusOK, gin.H{"ok": true, "message": "服务已启动"})
 				return
 			}
@@ -175,21 +165,20 @@ func StopService() gin.HandlerFunc {
 			port = chromeRemotePort
 		}
 
-		if !isPortListening(port) {
+		if !isServicePortListening(port) {
 			c.JSON(http.StatusOK, gin.H{"ok": true, "message": "服务未运行"})
 			return
 		}
 
-		// 用 getServicePID 查找并 kill
+		// 查找并 kill 占用端口的进程
 		pid := getServicePID(port)
 		if pid > 0 {
-			kill := exec.Command("kill", fmt.Sprintf("%d", pid))
-			kill.Run()
+			exec.Command("kill", fmt.Sprintf("%d", pid)).Run()
 		}
 
 		// 等待端口释放
 		for i := 0; i < 5; i++ {
-			if !isPortListening(port) {
+			if !isServicePortListening(port) {
 				c.JSON(http.StatusOK, gin.H{"ok": true, "message": "服务已停止"})
 				return
 			}
