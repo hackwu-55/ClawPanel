@@ -29,7 +29,7 @@ Go Single Binary · React 18 · TailwindCSS · SQLite · WebSocket Real-time · 
 
 > [!NOTE]
 > [!NOTE]
-> **v5.3.5 / v0.2.5 Update** — this follow-up release fixes the Lite packaging pipeline, bumps the bundled OpenClaw runtime to `2026.4.5`, and makes Lite packaging fall back to the official npm registry when `npmmirror` is missing tarballs. See [changelogs/v5.3.5.md](changelogs/v5.3.5.md) and [changelogs/lite-v0.2.5.md](changelogs/lite-v0.2.5.md)
+> **v5.3.6 / v0.2.6 Update** — this follow-up release fixes the Lite release script after the previous packaging fix: `install_npm_package` is now defined before use, while the bundled OpenClaw runtime stays on `2026.4.5` and the npm registry fallback remains enabled. See [changelogs/v5.3.6.md](changelogs/v5.3.6.md) and [changelogs/lite-v0.2.6.md](changelogs/lite-v0.2.6.md)
 
 > [!NOTE]
 > **v5.0.4 New** — 🔧 NapCat one-click diagnose & repair, system diagnostic report, QR login auto-detect & auto-close, disabled auto-login, container auto-restart after install, PATH detection fix. [View changelog](changelogs/v5.0.4.md)

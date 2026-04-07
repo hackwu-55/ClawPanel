@@ -114,6 +114,20 @@ resolve_node_root() {
   printf '%s\n' "$(dirname "$dir")"
 }
 
+install_npm_package() {
+  local prefix="$1"
+  local package_spec="$2"
+  local primary_registry="${3:-$NPM_REGISTRY}"
+  local fallback_registry="${4:-https://registry.npmjs.org}"
+
+  if npm install --omit=dev --no-package-lock --registry="$primary_registry" --prefix "$prefix" "$package_spec" >/dev/null; then
+    return 0
+  fi
+
+  echo "==> npm 镜像源安装失败，回退官方 npm registry: $package_spec" >&2
+  npm install --omit=dev --no-package-lock --registry="$fallback_registry" --prefix "$prefix" "$package_spec" >/dev/null
+}
+
 download_node_runtime() {
   local os="$1"
   local arch="$2"
@@ -352,16 +366,3 @@ sha256sum "$OUTPUT_DIR/$PACKAGE_NAME" > "$OUTPUT_DIR/checksums.txt"
 
 echo "==> Lite Core 打包完成"
 echo "    $OUTPUT_DIR/$PACKAGE_NAME"
-install_npm_package() {
-  local prefix="$1"
-  local package_spec="$2"
-  local primary_registry="${3:-$NPM_REGISTRY}"
-  local fallback_registry="${4:-https://registry.npmjs.org}"
-
-  if npm install --omit=dev --no-package-lock --registry="$primary_registry" --prefix "$prefix" "$package_spec" >/dev/null; then
-    return 0
-  fi
-
-  echo "==> npm 镜像源安装失败，回退官方 npm registry: $package_spec" >&2
-  npm install --omit=dev --no-package-lock --registry="$fallback_registry" --prefix "$prefix" "$package_spec" >/dev/null
-}
