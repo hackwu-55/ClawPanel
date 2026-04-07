@@ -251,6 +251,10 @@ func runServer(stopCh chan struct{}) {
 			auth.POST("/process/stop", handler.StopProcess(procMgr, sysLog))
 			auth.POST("/process/restart", handler.RestartProcess(procMgr, sysLog))
 			auth.GET("/process/status", handler.ProcessStatus(procMgr))
+			// 服务开关（maige ws / chrome remote）
+			auth.GET("/services/status", handler.GetServicesStatus())
+			auth.POST("/services/start", handler.StartService())
+			auth.POST("/services/stop", handler.StopService())
 
 			// 系统信息
 			auth.GET("/system/env", handler.GetSystemEnv(cfg))

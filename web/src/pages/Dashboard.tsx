@@ -5,6 +5,7 @@ import {
   Wifi, Users, Cpu, Clock, RefreshCw,
   ChevronDown, ChevronRight, ArrowDown, Activity,
   MemoryStick, Radio, TrendingUp, AlertTriangle, Download, Brain, Loader2,
+  Server,
 } from 'lucide-react';
 import type { LogEntry } from '../hooks/useWebSocket';
 import { useI18n } from '../i18n';
@@ -46,6 +47,8 @@ function DashboardPage({ logEntries, refreshLog }: DashboardProps) {
   const [autoScroll, setAutoScroll] = useState(true);
   const logRef = useRef<HTMLDivElement>(null);
   const [sessionActivity, setSessionActivity] = useState<SessionActivityItem[]>([]);
+  const [services, setServices] = useState<{name:string;port:string;running:boolean;pid?:number}[]>([]);
+  const [servicesLoading, setServicesLoading] = useState<Record<string,boolean>>({});
 
   useEffect(() => {
     api.getStatus().then(r => { if (r.ok) setStatus(r); });
@@ -75,6 +78,33 @@ function DashboardPage({ logEntries, refreshLog }: DashboardProps) {
   useEffect(() => {
     if (autoScroll && logRef.current) logRef.current.scrollTop = 0;
   }, [sessionActivity.length, logEntries.length, autoScroll]);
+
+  // 服务开关状态
+  useEffect(() => {
+    const loadServices = () => {
+      api.getServicesStatus().then(r => {
+        if (r.ok && Array.isArray(r.services)) setServices(r.services);
+      }).catch(() => {});
+    };
+    loadServices();
+    const interval = setInterval(loadServices, 15000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const toggleService = async (name: string, running: boolean) => {
+    setServicesLoading(prev => ({ ...prev, [name]: true }));
+    try {
+      if (running) {
+        await api.stopService(name);
+      } else {
+        await api.startService(name);
+      }
+      const r = await api.getServicesStatus();
+      if (r.ok && Array.isArray(r.services)) setServices(r.services);
+    } finally {
+      setServicesLoading(prev => { const n = { ...prev }; delete n[name]; return n; });
+    }
+  };
 
   const nc = status?.napcat || {};
   const wc = status?.wechat || {};
@@ -299,6 +329,46 @@ function DashboardPage({ logEntries, refreshLog }: DashboardProps) {
           </div>
         </div>
       )}
+
+      {/* 服务开关 */}
+      <div className={`shrink-0 ${modern ? 'rounded-[28px] border border-white/60 dark:border-slate-700/50 bg-[linear-gradient(145deg,rgba(255,255,255,0.84),rgba(239,246,255,0.62))] dark:bg-[linear-gradient(145deg,rgba(15,23,42,0.9),rgba(15,118,110,0.12))] backdrop-blur-xl shadow-[0_18px_40px_rgba(15,23,42,0.06)] p-5' : 'bg-white dark:bg-gray-800 shadow-sm border border-gray-100 dark:border-gray-700/50 rounded-xl p-4'}`}>
+        <div className="flex items-center gap-2 mb-4">
+          <div className={`p-1.5 rounded-xl border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300`}>
+            <Server size={16} />
+          </div>
+          <h3 className="font-bold text-sm text-gray-900 dark:text-white">附加服务</h3>
+          <span className="text-[10px] text-gray-400 ml-1">maige ws / chrome remote</span>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          {services.map(svc => {
+            const loading = servicesLoading[svc.name] || false;
+            return (
+              <div key={svc.name} className={`flex items-center gap-3 px-4 py-2.5 rounded-2xl border ${modern ? 'border-white/70 dark:border-slate-600/50 bg-white/60 dark:bg-slate-800/60 backdrop-blur-sm' : 'bg-gray-50 dark:bg-gray-700/50 border-gray-100 dark:border-gray-600/50'} shadow-sm`}>
+                <div className={`w-2 h-2 rounded-full ${svc.running ? 'bg-emerald-400 animate-pulse' : 'bg-gray-300 dark:bg-gray-600'}`} />
+                <div className="flex flex-col min-w-0">
+                  <span className="text-xs font-semibold text-gray-700 dark:text-gray-200 truncate">
+                    {svc.name === 'maige-ws' ? 'maige ws' : 'chrome remote'}
+                  </span>
+                  <span className="text-[10px] text-gray-400">:{svc.port} · {svc.running ? `PID ${svc.pid || '-'}` : '已停止'}</span>
+                </div>
+                <button
+                  onClick={() => toggleService(svc.name, svc.running)}
+                  disabled={loading}
+                  className={`ml-2 px-3 py-1 rounded-full text-[11px] font-semibold border transition-all disabled:opacity-50 ${svc.running
+                    ? 'border-red-200 dark:border-red-800/40 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/30'
+                    : 'border-emerald-200 dark:border-emerald-800/40 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/30'
+                    }`}
+                >
+                  {loading ? <Loader2 size={10} className="animate-spin" /> : svc.running ? '停止' : '启动'}
+                </button>
+              </div>
+            );
+          })}
+          {services.length === 0 && (
+            <div className="text-xs text-gray-400 py-2">加载中...</div>
+          )}
+        </div>
+      </div>
 
       {/* Recent activity */}
       <div className={`${modern ? 'rounded-[28px] border border-white/60 dark:border-slate-700/50 bg-[linear-gradient(145deg,rgba(255,255,255,0.84),rgba(239,246,255,0.62))] dark:bg-[linear-gradient(145deg,rgba(15,23,42,0.9),rgba(30,64,175,0.12))] backdrop-blur-xl shadow-[0_22px_48px_rgba(15,23,42,0.06)]' : 'bg-white dark:bg-gray-800 shadow-sm border border-gray-100 dark:border-gray-700/50'} flex-1 flex flex-col min-h-0 overflow-hidden`}>
