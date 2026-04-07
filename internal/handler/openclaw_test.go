@@ -1203,6 +1203,32 @@ func TestResolveWeComBotEntryID(t *testing.T) {
 	}
 }
 
+func TestToggleChannelSupportsOpenClawWeixinLabel(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "extensions", "openclaw-weixin"), 0755); err != nil {
+		t.Fatalf("mkdir openclaw-weixin extension: %v", err)
+	}
+	cfg := &config.Config{OpenClawDir: dir}
+	r := gin.New()
+	r.POST("/openclaw/toggle-channel", ToggleChannel(cfg, nil, nil))
+
+	body := []byte(`{"channelId":"openclaw-weixin","enabled":true}`)
+	req := httptest.NewRequest(http.MethodPost, "/openclaw/toggle-channel", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d, body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "微信（ClawBot）") {
+		t.Fatalf("expected response to mention openclaw-weixin label, got %s", w.Body.String())
+	}
+}
+
 func TestSaveChannelQQReturnsMessageWithoutProcessManager(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
@@ -1339,7 +1365,7 @@ func TestCleanupLegacyFeishuPluginIDs(t *testing.T) {
 	plugins := map[string]interface{}{
 		"allow": []interface{}{"feishu-openclaw-plugin", canonicalFeishuOfficialPluginID},
 		"entries": map[string]interface{}{
-			"feishu-openclaw-plugin":        map[string]interface{}{"enabled": true},
+			"feishu-openclaw-plugin":         map[string]interface{}{"enabled": true},
 			canonicalFeishuOfficialPluginID:  map[string]interface{}{"enabled": true},
 			canonicalFeishuCommunityPluginID: map[string]interface{}{"enabled": true},
 		},
@@ -1458,7 +1484,7 @@ func TestSwitchFeishuVariantUsesCanonicalIDsAndAllow(t *testing.T) {
 			"plugins": map[string]interface{}{
 				"allow": []interface{}{"feishu-openclaw-plugin"},
 				"entries": map[string]interface{}{
-					"feishu-openclaw-plugin":     map[string]interface{}{"enabled": true},
+					"feishu-openclaw-plugin":         map[string]interface{}{"enabled": true},
 					canonicalFeishuCommunityPluginID: map[string]interface{}{"enabled": true},
 				},
 			},

@@ -79,6 +79,26 @@ func TestBuiltInOfficialChannelPluginProvidesQQBotFallback(t *testing.T) {
 	}
 }
 
+func TestBuiltInOfficialChannelPluginProvidesOpenClawWeixinFallback(t *testing.T) {
+	t.Parallel()
+
+	plugin := builtInOfficialChannelPlugin("openclaw-weixin")
+	if plugin == nil {
+		t.Fatal("expected openclaw-weixin fallback metadata")
+	}
+	if plugin.ID != "openclaw-weixin" {
+		t.Fatalf("unexpected plugin id: %q", plugin.ID)
+	}
+	if plugin.NpmPackage != "@tencent-weixin/openclaw-weixin" {
+		t.Fatalf("unexpected openclaw-weixin npm package: %q", plugin.NpmPackage)
+	}
+
+	strategy := resolvePluginInstallStrategy(plugin, "")
+	if strategy.kind != "npm" || strategy.target != "@tencent-weixin/openclaw-weixin@latest" {
+		t.Fatalf("expected openclaw-weixin fallback to use preferred npm spec, got %#v", strategy)
+	}
+}
+
 func TestBuiltInOfficialChannelPluginUnknownReturnsNil(t *testing.T) {
 	t.Parallel()
 
@@ -698,7 +718,7 @@ func TestScanInstalledPluginsPrunesMissingStateEntries(t *testing.T) {
 
 	configFile := filepath.Join(dir, "plugins.json")
 	m := &Manager{
-		cfg:        &config.Config{OpenClawDir: openClawDir},
+		cfg: &config.Config{OpenClawDir: openClawDir},
 		plugins: map[string]*InstalledPlugin{
 			"ghost-plugin": {
 				PluginMeta: PluginMeta{ID: "ghost-plugin", Name: "Ghost Plugin"},

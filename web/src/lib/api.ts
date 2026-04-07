@@ -110,6 +110,10 @@ const _api = {
   cleanupQQChannel: () => post('/openclaw/qq-channel/cleanup'),
   deleteQQChannel: () => post('/openclaw/qq-channel/delete'),
   switchFeishuVariant: (variant: 'official' | 'clawteam') => post('/openclaw/feishu-variant', { variant }),
+  getOpenClawWeixinStatus: () => get('/openclaw/weixin/status'),
+  startOpenClawWeixinQRCode: (data?: { force?: boolean; sessionKey?: string; accountId?: string }) => post('/openclaw/weixin/qrcode', data || {}),
+  waitOpenClawWeixinQRCode: (sessionKey: string, timeoutMs = 35000) => postLong('/openclaw/weixin/qrcode/wait', { sessionKey, timeoutMs }, timeoutMs + 5000),
+  logoutOpenClawWeixin: (accountId?: string) => post('/openclaw/weixin/logout', { accountId }),
   // WeChat
   wechatStatus: () => get('/wechat/status'),
   wechatLoginUrl: () => get('/wechat/login-url'),

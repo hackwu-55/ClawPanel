@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
+import QRCode from 'qrcode';
 import { api } from '../lib/api';
 import { Radio, Wifi, WifiOff, QrCode, Key, Zap, UserCheck, Check, X, Power, Loader2, RefreshCw, LogOut, Sparkles, Download, Package, Wrench, Search, Copy, CheckCircle, AlertTriangle, AlertCircle, Trash2 } from 'lucide-react';
 import InfoTooltip from '../components/InfoTooltip';
@@ -418,6 +419,13 @@ const CHANNEL_DEFS: ChannelDef[] = [
       { key: 'corpSecret', label: 'Corp Secret', type: 'password', help: '应用 Secret' },
       { key: 'agentId', label: 'Agent ID', type: 'text', help: '应用 Agent ID' },
     ] },
+  { id: 'openclaw-weixin', label: '微信（ClawBot）', description: '腾讯官方 WeChat ClawBot 插件，当前重点支持微信私聊', type: 'plugin', loginMethods: ['qrcode'],
+    configFields: [
+      { key: 'name', label: '账号显示名', type: 'text', help: '可选。作为当前默认账号的显示名称；真正登录凭证由扫码写入本地。' },
+      { key: 'baseUrl', label: 'Base URL', type: 'text', placeholder: 'https://ilinkai.weixin.qq.com', help: '默认可保持官方地址，仅在腾讯侧给出其他入口时调整。' },
+      { key: 'cdnBaseUrl', label: 'CDN Base URL', type: 'text', placeholder: 'https://novac2c.cdn.weixin.qq.com/c2c', help: '媒体上传/下载 CDN 地址；通常保持默认即可。' },
+      { key: 'routeTag', label: 'Route Tag', type: 'number', help: '可选。多入口或灰度路由场景下才需要。' },
+    ] },
   { id: 'msteams', label: 'Microsoft Teams', description: 'Bot Framework (插件)', type: 'plugin',
     configFields: [
       { key: 'appId', label: 'App ID', type: 'text' },
@@ -622,7 +630,9 @@ export default function Channels() {
   const [requests, setRequests] = useState<any[]>([]);
   // QQ Login state
   const [loginModal, setLoginModal] = useState<'qrcode' | 'quick' | 'password' | null>(null);
+  const [loginChannelId, setLoginChannelId] = useState<string>('');
   const [qrImg, setQrImg] = useState('');
+  const [qrRenderImg, setQrRenderImg] = useState('');
   const [qrLoading, setQrLoading] = useState(false);
   const [quickList, setQuickList] = useState<string[]>([]);
   const [loginUin, setLoginUin] = useState('');
@@ -641,6 +651,9 @@ export default function Channels() {
   const [restarting, setRestarting] = useState(false);
   const [installedPlugins, setInstalledPlugins] = useState<any[]>([]);
   const [installingChannelPlugin, setInstallingChannelPlugin] = useState<string | null>(null);
+  const [openClawWeixinStatus, setOpenClawWeixinStatus] = useState<any>(null);
+  const [openClawWeixinSessionKey, setOpenClawWeixinSessionKey] = useState('');
+  const [loggingOutWeixinAccount, setLoggingOutWeixinAccount] = useState<string | null>(null);
   const [qqChannelState, setQQChannelState] = useState<any>(null);
   const [channelDrafts, setChannelDrafts] = useState<Record<string, any>>({});
   const [channelFieldTextDrafts, setChannelFieldTextDrafts] = useState<Record<string, string>>({});
@@ -787,6 +800,10 @@ export default function Channels() {
     api.getQQChannelState().then((r: any) => { if (r.ok) setQQChannelState(r.state || null); }).catch(() => {});
   };
 
+  const loadOpenClawWeixinStatus = () => {
+    api.getOpenClawWeixinStatus().then((r: any) => { if (r.ok) setOpenClawWeixinStatus(r); }).catch(() => {});
+  };
+
   const loadFeishuDmDiagnosis = useCallback(async () => {
     setLoadingFeishuDmDiagnosis(true);
     try {
@@ -870,6 +887,7 @@ export default function Channels() {
     });
     loadFeishuDmDiagnosis();
     api.getRequests().then(r => { if (r.ok) setRequests(r.requests || []); });
+    loadOpenClawWeixinStatus();
   };
 
   useEffect(() => {
@@ -890,6 +908,7 @@ export default function Channels() {
       api.napcatStatus().then(r => { if (r.ok) setNapcatStatus(r.status); }).catch(() => {}),
       api.getInstalledPlugins().then((r: any) => { if (r.ok) setInstalledPlugins(r.plugins || []); }).catch(() => {}),
       api.getQQChannelState().then((r: any) => { if (r.ok) setQQChannelState(r.state || null); }).catch(() => {}),
+      api.getOpenClawWeixinStatus().then((r: any) => { if (r.ok) setOpenClawWeixinStatus(r); }).catch(() => {}),
     ]).catch(() => {});
   }, []);
   // 自动选择第一个已启用的渠道（而非硬编码 QQ）
@@ -1230,6 +1249,9 @@ export default function Channels() {
   };
 
   const currentDef = CHANNEL_DEFS.find(c => c.id === selectedChannel);
+  const currentLoginChannelId = loginChannelId || currentDef?.id || '';
+  const currentLoginChannel = CHANNEL_DEFS.find(channel => channel.id === currentLoginChannelId) || currentDef;
+  const openClawWeixinAccounts = Array.isArray(openClawWeixinStatus?.accounts) ? openClawWeixinStatus.accounts : [];
 
   const syncSelectedChannel = (channelId: string) => {
     setSelectedChannel(channelId);
@@ -1331,29 +1353,66 @@ export default function Channels() {
   };
 
   // === QQ Login handlers ===
-  const handleQRLogin = async () => {
-    setLoginModal('qrcode'); setQrImg(''); setQrLoading(true); setLoginMsg('');
+  const handleQRLogin = async (channelId = currentDef?.id || selectedChannel) => {
+    setLoginChannelId(channelId);
+    setLoginModal('qrcode');
+    setQrImg('');
+    setQrLoading(true);
+    setLoginMsg('');
     try {
+      if (channelId === 'openclaw-weixin') {
+        const r = await api.startOpenClawWeixinQRCode({
+          force: true,
+          sessionKey: openClawWeixinSessionKey || undefined,
+        });
+        if (r.ok && r.qrcodeUrl) {
+          setQrImg(r.qrcodeUrl);
+          setOpenClawWeixinSessionKey(String(r.sessionKey || ''));
+          startQrPolling('openclaw-weixin', String(r.sessionKey || ''));
+        } else {
+          setLoginMsg(r.message || r.error || '获取微信二维码失败');
+        }
+        return;
+      }
+
       const r = await api.napcatGetQRCode();
       if (r.ok && r.data?.qrcode) {
         setQrImg(r.data.qrcode);
-        startQrPolling();
+        startQrPolling('qq');
       } else if (r.message?.includes('Logined') || r.data?.message?.includes('Logined')) {
         setLoginMsg('QQ 已登录，无需重复登录');
       } else {
         setLoginMsg(r.message || r.data?.message || r.error || '获取二维码失败');
       }
-    } catch (err) { setLoginMsg('获取二维码失败: ' + String(err)); }
-    finally { setQrLoading(false); }
+    } catch (err) {
+      setLoginMsg((channelId === 'openclaw-weixin' ? '获取微信二维码失败: ' : '获取二维码失败: ') + String(err));
+    } finally {
+      setQrLoading(false);
+    }
   };
 
   const handleRefreshQR = async () => {
     setQrLoading(true); setLoginMsg('');
     try {
+      if (currentLoginChannelId === 'openclaw-weixin') {
+        const r = await api.startOpenClawWeixinQRCode({
+          force: true,
+          sessionKey: openClawWeixinSessionKey || undefined,
+        });
+        if (r.ok && r.qrcodeUrl) {
+          setQrImg(r.qrcodeUrl);
+          setOpenClawWeixinSessionKey(String(r.sessionKey || ''));
+          startQrPolling('openclaw-weixin', String(r.sessionKey || ''));
+        } else {
+          setLoginMsg(r.message || r.error || '刷新失败');
+        }
+        return;
+      }
+
       const r = await api.napcatRefreshQRCode();
       if (r.ok && r.data?.qrcode) {
         setQrImg(r.data.qrcode);
-        startQrPolling();
+        startQrPolling('qq');
       } else {
         setLoginMsg(r.data?.message || '刷新失败');
       }
@@ -1457,6 +1516,26 @@ export default function Channels() {
     }
   };
 
+  const handleOpenClawWeixinLogout = async (accountId: string) => {
+    if (!confirm(`确定要退出微信账号 ${accountId} 吗？退出后需要重新扫码登录。`)) return;
+    setLoggingOutWeixinAccount(accountId);
+    try {
+      const r = await api.logoutOpenClawWeixin(accountId);
+      if (r.ok) {
+        setMsg(r.message || '微信账号已退出');
+        loadOpenClawWeixinStatus();
+        reload();
+      } else {
+        setMsg(r.error || '退出登录失败');
+      }
+    } catch (err) {
+      setMsg('退出登录失败: ' + String(err));
+    } finally {
+      setLoggingOutWeixinAccount(null);
+      setTimeout(() => setMsg(''), 5000);
+    }
+  };
+
   const handleDiagnose = async (repair: boolean) => {
     setDiagnosing(true);
     setDiagnoseResult(null);
@@ -1473,10 +1552,42 @@ export default function Channels() {
   };
 
   // QR code polling: check login status every 3s after QR is shown
-  const startQrPolling = () => {
+  const startQrPolling = (channelId: string, sessionKey?: string) => {
     stopQrPolling();
     qrPollRef.current = setInterval(async () => {
       try {
+        if (channelId === 'openclaw-weixin') {
+          const activeSessionKey = sessionKey || openClawWeixinSessionKey;
+          if (!activeSessionKey) return;
+          const r = await api.waitOpenClawWeixinQRCode(activeSessionKey, 30000);
+          if (!r.ok) {
+            setLoginMsg(r.error || '微信登录状态检查失败');
+            return;
+          }
+          if (r.connected) {
+            stopQrPolling();
+            setLoginMsg(`✅ ${r.message || '微信连接成功'}`);
+            loadOpenClawWeixinStatus();
+            reload();
+            setTimeout(() => {
+              setLoginModal(null);
+              setOpenClawWeixinSessionKey('');
+            }, 1500);
+            return;
+          }
+          if (r.status === 'scaned') {
+            setLoginMsg('已扫码，请在微信里确认登录');
+            return;
+          }
+          if (r.status === 'expired') {
+            stopQrPolling();
+            setLoginMsg('二维码已过期，请刷新');
+            return;
+          }
+          if (r.message) setLoginMsg(r.message);
+          return;
+        }
+
         const r = await api.napcatLoginStatus();
         if (r.ok && r.data?.isLogin) {
           stopQrPolling();
@@ -1499,8 +1610,45 @@ export default function Channels() {
   // Cleanup polling on unmount or modal close
   useEffect(() => {
     if (!loginModal) stopQrPolling();
+    if (!loginModal) {
+      setLoginChannelId('');
+      setOpenClawWeixinSessionKey('');
+      setQrRenderImg('');
+    }
     return () => stopQrPolling();
   }, [loginModal]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const renderQRCode = async () => {
+      if (!qrImg) {
+        setQrRenderImg('');
+        return;
+      }
+      if (currentLoginChannelId !== 'openclaw-weixin') {
+        setQrRenderImg(qrImg);
+        return;
+      }
+      try {
+        const dataUrl = await QRCode.toDataURL(qrImg, {
+          width: 192,
+          margin: 1,
+        });
+        if (!cancelled) setQrRenderImg(dataUrl);
+      } catch {
+        if (!cancelled) {
+          setQrRenderImg('');
+          setLoginMsg('微信二维码生成失败，请刷新后重试');
+        }
+      }
+    };
+
+    renderQRCode();
+    return () => {
+      cancelled = true;
+    };
+  }, [qrImg, currentLoginChannelId]);
 
   const handleApprove = async (flag: string) => {
     await api.approveRequest(flag);
@@ -1885,7 +2033,7 @@ export default function Channels() {
                   {currentDef.loginMethods && currentDef.loginMethods.length > 0 && (
                     <div className="flex items-center gap-2 border-l border-gray-200 dark:border-gray-700 pl-3 ml-1">
                       {currentDef.loginMethods.includes('qrcode') && (
-                        <button onClick={handleQRLogin} className={`${modern ? 'page-modern-accent px-3 py-1.5 text-xs' : 'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors'}`}>
+                        <button onClick={() => handleQRLogin(currentDef.id)} className={`${modern ? 'page-modern-accent px-3 py-1.5 text-xs' : 'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors'}`}>
                           <QrCode size={14} />{t.channels.qrLogin}
                         </button>
                       )}
@@ -2607,6 +2755,123 @@ export default function Channels() {
                 </div>
               )}
 
+              {currentDef.id === 'openclaw-weixin' && (
+                <div className="rounded-lg border border-blue-200 dark:border-blue-800/40 bg-blue-50/80 dark:bg-blue-900/10 px-4 py-3 text-xs text-blue-700 dark:text-blue-300 leading-relaxed space-y-1.5">
+                  <div className="font-semibold text-blue-900 dark:text-blue-100">腾讯官方微信通道接入步骤</div>
+                  <div>现在可以直接在面板里生成登录二维码；底层仍然使用 OpenClaw 官方微信通道的扫码登录流程。</div>
+                  <div>建议顺序：先安装插件并启用，再点击上方“二维码登录”完成扫码，确认后面板会自动刷新账号状态。</div>
+                  <div>如果你准备接多个微信账号，建议再执行 <span className="font-mono">openclaw config set session.dmScope per-account-channel-peer</span>，避免不同账号私聊上下文串线。</div>
+                </div>
+              )}
+
+              {currentDef.id === 'openclaw-weixin' && (
+                <div className="rounded-xl border border-gray-100 dark:border-gray-700 p-4 space-y-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <h4 className="text-sm font-semibold text-gray-900 dark:text-white">微信登录状态</h4>
+                      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
+                        面板会读取 OpenClaw 微信通道本地账号文件，展示当前已登录账号，并提供刷新二维码和退出登录操作。
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => loadOpenClawWeixinStatus()}
+                        className={`${modern ? 'page-modern-action px-3 py-1.5 text-xs' : 'flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors'}`}
+                      >
+                        <RefreshCw size={12} />
+                        刷新状态
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleQRLogin('openclaw-weixin')}
+                        className={`${modern ? 'page-modern-accent px-3 py-1.5 text-xs' : 'flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors'}`}
+                      >
+                        <QrCode size={12} />
+                        新增登录
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 xl:grid-cols-4 gap-3">
+                    <div className="rounded-lg border border-gray-100 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-900/30 px-3 py-3">
+                      <div className="text-[11px] text-gray-500 dark:text-gray-400">插件安装</div>
+                      <div className={`mt-1 text-sm font-semibold ${openClawWeixinStatus?.pluginInstalled ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                        {openClawWeixinStatus?.pluginInstalled ? '已安装' : '未安装'}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-gray-100 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-900/30 px-3 py-3">
+                      <div className="text-[11px] text-gray-500 dark:text-gray-400">插件启用</div>
+                      <div className={`mt-1 text-sm font-semibold ${openClawWeixinStatus?.enabled ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                        {openClawWeixinStatus?.enabled ? '已启用' : '未启用'}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-gray-100 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-900/30 px-3 py-3">
+                      <div className="text-[11px] text-gray-500 dark:text-gray-400">已登录账号</div>
+                      <div className="mt-1 text-sm font-semibold text-gray-900 dark:text-white">{openClawWeixinAccounts.length}</div>
+                    </div>
+                    <div className="rounded-lg border border-gray-100 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-900/30 px-3 py-3">
+                      <div className="text-[11px] text-gray-500 dark:text-gray-400">待处理登录</div>
+                      <div className="mt-1 text-sm font-semibold text-gray-900 dark:text-white">{Number(openClawWeixinStatus?.pendingLogins || 0)}</div>
+                    </div>
+                  </div>
+
+                  {openClawWeixinAccounts.length > 0 ? (
+                    <div className="space-y-3">
+                      {openClawWeixinAccounts.map((account: any) => (
+                        <div key={account.accountId} className="rounded-xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900/40 px-4 py-4">
+                          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <div className="text-sm font-semibold text-gray-900 dark:text-white">
+                                  {account.name || account.accountId}
+                                </div>
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${account.configured ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300' : 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300'}`}>
+                                  {account.configured ? '已登录' : '未完成'}
+                                </span>
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${account.enabled ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300' : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300'}`}>
+                                  {account.enabled ? '启用中' : '已禁用'}
+                                </span>
+                              </div>
+                              <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-xs text-gray-500 dark:text-gray-400">
+                                <div>账号 ID：<span className="font-mono text-gray-700 dark:text-gray-200">{account.accountId}</span></div>
+                                <div>用户 ID：<span className="font-mono text-gray-700 dark:text-gray-200">{account.userId || '-'}</span></div>
+                                <div className="md:col-span-2">Base URL：<span className="font-mono text-gray-700 dark:text-gray-200 break-all">{account.baseUrl || '-'}</span></div>
+                                <div className="md:col-span-2">CDN：<span className="font-mono text-gray-700 dark:text-gray-200 break-all">{account.cdnBaseUrl || '-'}</span></div>
+                                <div>最近保存：<span className="font-mono text-gray-700 dark:text-gray-200">{account.savedAt || '-'}</span></div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleQRLogin('openclaw-weixin')}
+                                className={`${modern ? 'page-modern-accent px-3 py-1.5 text-xs' : 'flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors'}`}
+                              >
+                                <RefreshCw size={12} />
+                                重新扫码
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenClawWeixinLogout(String(account.accountId || ''))}
+                                disabled={loggingOutWeixinAccount === account.accountId}
+                                className={`${modern ? 'page-modern-danger px-3 py-1.5 text-xs' : 'flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50 disabled:opacity-50 transition-colors'}`}
+                              >
+                                {loggingOutWeixinAccount === account.accountId ? <Loader2 size={12} className="animate-spin" /> : <LogOut size={12} />}
+                                退出登录
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-gray-200 dark:border-gray-700 px-4 py-5 text-xs text-gray-500 dark:text-gray-400">
+                      当前还没有已登录的微信账号。点击上方“新增登录”即可在面板里生成二维码并扫码接入。
+                    </div>
+                  )}
+                </div>
+              )}
+
               {currentDef.id === 'feishu' && String(getEffectiveChannelConfig('feishu')?.dmPolicy || 'pairing') === 'pairing' && (
                 <div className="rounded-lg border border-amber-200 dark:border-amber-800/40 bg-amber-50/80 dark:bg-amber-900/10 px-4 py-3 text-xs text-amber-700 dark:text-amber-300 leading-relaxed space-y-1.5">
                   <div className="font-semibold text-amber-900 dark:text-amber-100">飞书当前处于配对模式</div>
@@ -2800,15 +3065,15 @@ export default function Channels() {
         </div>
       </div>
 
-      {/* QQ Login Modal */}
+      {/* Channel Login Modal */}
       {loginModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setLoginModal(null)}>
           <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl max-w-md w-full overflow-hidden transform transition-all border border-gray-100 dark:border-gray-800" onClick={e => e.stopPropagation()}>
             <div className="px-5 py-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between bg-gray-50/50 dark:bg-gray-900">
               <h3 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                {loginModal === 'qrcode' && <><QrCode size={18} className="text-blue-500" /> QQ {t.channels.qrLogin}</>}
-                {loginModal === 'quick' && <><Zap size={18} className="text-emerald-500" /> QQ {t.channels.quickLogin}</>}
-                {loginModal === 'password' && <><Key size={18} className="text-amber-500" /> QQ {t.channels.passwordLogin}</>}
+                {loginModal === 'qrcode' && <><QrCode size={18} className="text-blue-500" /> {currentLoginChannel?.label || '渠道'} {t.channels.qrLogin}</>}
+                {loginModal === 'quick' && <><Zap size={18} className="text-emerald-500" /> {currentLoginChannel?.label || 'QQ'} {t.channels.quickLogin}</>}
+                {loginModal === 'password' && <><Key size={18} className="text-amber-500" /> {currentLoginChannel?.label || 'QQ'} {t.channels.passwordLogin}</>}
               </h3>
               <button onClick={() => setLoginModal(null)} className={`${modern ? 'page-modern-action p-1.5' : 'p-1 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors'}`}>
                 <X size={18} />
@@ -2829,14 +3094,16 @@ export default function Channels() {
                     <div className="w-48 h-48 flex items-center justify-center bg-gray-50 dark:bg-gray-800 rounded-lg">
                       <Loader2 size={24} className="animate-spin text-gray-400" />
                     </div>
-                  ) : qrImg ? (
-                    <img src={qrImg.startsWith('data:') ? qrImg : `data:image/png;base64,${qrImg}`} alt="QR Code" className="w-48 h-48 rounded-lg border border-gray-200 dark:border-gray-700" />
+                  ) : qrRenderImg ? (
+                    <img src={qrRenderImg.startsWith('data:') || qrRenderImg.startsWith('http') ? qrRenderImg : `data:image/png;base64,${qrRenderImg}`} alt="QR Code" className="w-48 h-48 rounded-lg border border-gray-200 dark:border-gray-700" />
                   ) : (
                     <div className="w-48 h-48 flex items-center justify-center bg-gray-50 dark:bg-gray-800 rounded-lg text-xs text-gray-400">
                       {t.channels.cannotLoadQR}
                     </div>
                   )}
-                  <p className="text-xs text-gray-500">{t.channels.scanQR}</p>
+                  <p className="text-xs text-gray-500">
+                    {currentLoginChannelId === 'openclaw-weixin' ? '使用微信扫描二维码，并在手机上确认登录。' : t.channels.scanQR}
+                  </p>
                   <button onClick={handleRefreshQR} disabled={qrLoading}
                     className={`${modern ? 'page-modern-accent px-3 py-1.5 text-xs' : 'flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50'}`}>
                     <RefreshCw size={12} className={qrLoading ? 'animate-spin' : ''} />{t.channels.refreshQR}

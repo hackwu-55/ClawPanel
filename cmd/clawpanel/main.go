@@ -241,6 +241,10 @@ func runServer(stopCh chan struct{}) {
 			auth.POST("/openclaw/qq-channel/cleanup", handler.CleanupQQChannel(cfg, taskMgr, procMgr))
 			auth.POST("/openclaw/qq-channel/delete", handler.DeleteQQChannel(cfg, taskMgr, procMgr, pluginMgr, napcatMon))
 			auth.POST("/openclaw/feishu-variant", handler.SwitchFeishuVariant(cfg, procMgr, sysLog))
+			auth.GET("/openclaw/weixin/status", handler.GetOpenClawWeixinStatus(cfg))
+			auth.POST("/openclaw/weixin/qrcode", handler.StartOpenClawWeixinQRCode(cfg))
+			auth.POST("/openclaw/weixin/qrcode/wait", handler.WaitOpenClawWeixinQRCode(cfg, procMgr))
+			auth.POST("/openclaw/weixin/logout", handler.LogoutOpenClawWeixin(cfg, procMgr))
 
 			// 进程管理
 			auth.POST("/process/start", handler.StartProcess(procMgr, sysLog))

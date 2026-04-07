@@ -39,7 +39,7 @@ func GetStatus(db *sql.DB, cfg *config.Config, procMgr *process.Manager, napcatM
 			"slack": "Slack", "signal": "Signal", "googlechat": "Google Chat",
 			"webchat": "WebChat", "feishu": "飞书 / Lark", "qqbot": "QQ 官方机器人",
 			"dingtalk": "钉钉", "wecom": "企业微信（智能机器人）", "wecom-app": "企业微信（自建应用）", "msteams": "Microsoft Teams",
-			"mattermost": "Mattermost", "line": "LINE", "matrix": "Matrix", "twitch": "Twitch",
+			"mattermost": "Mattermost", "line": "LINE", "matrix": "Matrix", "twitch": "Twitch", "openclaw-weixin": "微信（ClawBot）",
 		}
 
 		type enabledChannel struct {

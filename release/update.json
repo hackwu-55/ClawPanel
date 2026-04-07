@@ -1,13 +1,13 @@
 {
-  "latest_version": "5.3.6",
-  "release_time": "2026-04-06T23:59:50+08:00",
-  "release_note": "## ClawPanel Pro v5.3.6\n\n- 跟进 v5.3.5 / v0.2.5 发布中 Lite 构建脚本函数定义顺序错误的问题，补发修复版本\n- 保持本机更新镜像、公开脚本入口与 CLAWPANEL_PUBLIC_BASE 设计不变\n- Lite 内嵌 OpenClaw runtime 继续使用 2026.4.5",
+  "latest_version": "5.3.7",
+  "release_time": "2026-04-07T21:04:07+08:00",
+  "release_note": "## ClawPanel Pro v5.3.7\n\n- 新增腾讯官方微信 openclaw-weixin 通道面板接入，支持二维码登录、扫码状态轮询、刷新二维码与账号退出登录\n- 渠道页新增微信账号状态面板，可展示插件安装/启用状态、待处理登录数与已登录账号详情\n- 修复微信二维码展示逻辑：腾讯返回的是登录链接，面板现改为本地生成二维码图片，避免浏览器直接加载失败",
   "download_urls": {
-    "linux_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.3.6/clawpanel-v5.3.6-linux-amd64",
-    "linux_arm64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.3.6/clawpanel-v5.3.6-linux-arm64",
-    "darwin_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.3.6/clawpanel-v5.3.6-darwin-amd64",
-    "darwin_arm64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.3.6/clawpanel-v5.3.6-darwin-arm64",
-    "windows_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.3.6/clawpanel-v5.3.6-windows-amd64.exe"
+    "linux_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.3.7/clawpanel-v5.3.7-linux-amd64",
+    "linux_arm64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.3.7/clawpanel-v5.3.7-linux-arm64",
+    "darwin_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.3.7/clawpanel-v5.3.7-darwin-amd64",
+    "darwin_arm64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.3.7/clawpanel-v5.3.7-darwin-arm64",
+    "windows_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/pro-v5.3.7/clawpanel-v5.3.7-windows-amd64.exe"
   },
   "major_change": false,
   "change_warning": ""

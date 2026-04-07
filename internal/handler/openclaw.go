@@ -1421,7 +1421,7 @@ func ToggleChannel(cfg *config.Config, procMgr *process.Manager, napcatMon *moni
 
 		channelNames := map[string]string{
 			"qq": "QQ (NapCat)", "wechat": "微信", "feishu": "飞书",
-			"qqbot": "QQ Bot", "dingtalk": "钉钉", "wecom": "企业微信",
+			"qqbot": "QQ Bot", "dingtalk": "钉钉", "wecom": "企业微信", "openclaw-weixin": "微信（ClawBot）",
 		}
 		label := channelNames[req.ChannelID]
 		if label == "" {

@@ -29,12 +29,13 @@ const (
 var officialFeishuPluginIDs = []string{"openclaw-lark"}
 
 var preferredPluginPackageSpecs = map[string]string{
-	"qqbot":         "@sliverp/qqbot@latest",
-	"feishu":        "@openclaw/feishu@latest",
-	"openclaw-lark": "@larksuite/openclaw-lark@latest",
-	"dingtalk":      "@largezhou/ddingtalk@latest",
-	"wecom":         "@wecom/wecom-openclaw-plugin@latest",
-	"wecom-app":     "@openclaw-china/wecom-app@latest",
+	"qqbot":           "@sliverp/qqbot@latest",
+	"feishu":          "@openclaw/feishu@latest",
+	"openclaw-lark":   "@larksuite/openclaw-lark@latest",
+	"dingtalk":        "@largezhou/ddingtalk@latest",
+	"wecom":           "@wecom/wecom-openclaw-plugin@latest",
+	"wecom-app":       "@openclaw-china/wecom-app@latest",
+	"openclaw-weixin": "@tencent-weixin/openclaw-weixin@latest",
 }
 
 var builtInOfficialChannelPlugins = map[string]RegistryPlugin{
@@ -103,6 +104,17 @@ var builtInOfficialChannelPlugins = map[string]RegistryPlugin{
 			Category:    "channel",
 		},
 		NpmPackage: "@openclaw-china/wecom-app",
+	},
+	"openclaw-weixin": {
+		PluginMeta: PluginMeta{
+			ID:          "openclaw-weixin",
+			Name:        "微信（ClawBot）",
+			Version:     "latest",
+			Author:      "Tencent",
+			Description: "腾讯官方 WeChat ClawBot 通道插件",
+			Category:    "channel",
+		},
+		NpmPackage: "@tencent-weixin/openclaw-weixin",
 	},
 }
 
@@ -1076,7 +1088,7 @@ func (m *Manager) scanLiteRuntimePlugins() {
 			entries = currentEntries
 		}
 	}
-	for _, pluginID := range []string{"telegram", "feishu", "openclaw-lark", "qq", "qqbot", "dingtalk", "wecom", "wecom-app"} {
+	for _, pluginID := range []string{"telegram", "feishu", "openclaw-lark", "qq", "qqbot", "dingtalk", "wecom", "wecom-app", "openclaw-weixin"} {
 		pluginDir := filepath.Join(appDir, "extensions", pluginID)
 		meta, err := m.readPluginMeta(pluginDir)
 		if err != nil {
@@ -1548,7 +1560,7 @@ func cleanupChannelConfigForPlugin(ocConfig map[string]interface{}, pluginID str
 		if !officialStillInstalled {
 			delete(channels, "feishu")
 		}
-	case "wecom", "wecom-app", "dingtalk", "qqbot", "discord", "mattermost", "line", "matrix", "twitch", "msteams":
+	case "wecom", "wecom-app", "dingtalk", "qqbot", "discord", "mattermost", "line", "matrix", "twitch", "msteams", "openclaw-weixin":
 		delete(channels, pluginID)
 	}
 }

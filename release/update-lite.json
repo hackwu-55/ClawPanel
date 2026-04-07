@@ -1,11 +1,11 @@
 {
-  "latest_version": "0.2.6",
-  "release_time": "2026-04-06T23:59:50+08:00",
-  "release_note": "## ClawPanel Lite v0.2.6\n\n- 修复 package-lite-core.sh 中 install_npm_package 定义位置错误，避免 Release Build 执行时 command not found\n- 保持 Lite 内嵌 OpenClaw runtime 2026.4.5 与 npm 官方源回退逻辑不变\n- 保持本机更新镜像、CLAWPANEL_PUBLIC_BASE 与强制 SHA256 校验链路不变",
+  "latest_version": "0.2.7",
+  "release_time": "2026-04-07T21:04:07+08:00",
+  "release_note": "## ClawPanel Lite v0.2.7\n\n- 同步接入腾讯官方微信 openclaw-weixin 通道面板能力，支持二维码登录、扫码状态轮询、刷新二维码与账号退出登录\n- 新增微信账号状态面板，便于在 Lite 版直接查看账号、插件状态与待处理登录数\n- 修复微信二维码展示逻辑：将腾讯返回的登录链接本地重绘为二维码图片，避免浏览器直接加载失败",
   "download_urls": {
-    "linux_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.2.6/clawpanel-lite-core-v0.2.6-linux-amd64.tar.gz",
-    "darwin_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.2.6/clawpanel-lite-core-v0.2.6-darwin-amd64.tar.gz",
-    "darwin_arm64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.2.6/clawpanel-lite-core-v0.2.6-darwin-arm64.tar.gz"
+    "linux_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.2.7/clawpanel-lite-core-v0.2.7-linux-amd64.tar.gz",
+    "darwin_amd64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.2.7/clawpanel-lite-core-v0.2.7-darwin-amd64.tar.gz",
+    "darwin_arm64": "https://github.com/zhaoxinyi02/ClawPanel/releases/download/lite-v0.2.7/clawpanel-lite-core-v0.2.7-darwin-arm64.tar.gz"
   },
   "major_change": false,
   "change_warning": ""
